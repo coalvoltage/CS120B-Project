@@ -15,6 +15,7 @@
 #include <keypad.h>
 #include <stdio.h>
 #include <io.c>
+#include "nokia5110.h"
 
 //--------Find GCD function --------------------------------------------------
 unsigned long int findGCD(unsigned long int a, unsigned long int b)
@@ -198,6 +199,315 @@ unsigned char TickLED(unsigned char state) {
 	return state;
 }
 
+//const unsigned short BOMBPERIOD = 
+
+struct playerObj {
+	unsigned char playerPosX;
+	unsigned char playerPosY;
+	unsigned char currentGraphic;
+	
+	unsigned char isBombPlaced;
+	unsigned char bombPosX;
+	unsigned char bombPosY;
+	unsigned short bombCount;
+} player1;
+
+enum objectType {OBJEmpty, OBJWall, OBJPlayer, OBJEnemy, OBJBomb, OBJBlock};
+unsigned char objectLocMatrix[3][7];
+
+unsigned short bombperson_img[12] = 
+{0x03FC,0x07FE,0x0D1C,0x0999,
+ 0x0999,0x030C,0x07FE,0x03FC,
+ 0x0090,0x0090,0x06F6,0x0F0F};
+ 
+ unsigned short bomb_img[12] =
+ {0x001C,0x0016,0x00FA,0x013A,
+	 0x02F4,0x07EE,0x07FE,0x059E,
+ 0x049E,0x027C,0x01F8,0x00F0};
+ 
+ unsigned short wall_img[12] =
+ {0x07AE,0x0F5F, 0x0FAF,
+	 0x0AFA,0x07F7, 0x0AFA,
+	 0x0FAF,0x0F7F, 0x0FAF,
+ 0x0AFA,0x07F7, 0x02FA};
+ 
+ unsigned short enemy_img[12] =
+ {0x03FC, 0x0606, 0x0C03,
+	 0x0B9D, 0x0B9D, 0x0999,
+	 0x0C03, 0x070E, 0x01F8,
+ 0x0158, 0x01A8, 0x00F0};
+
+ unsigned short nobreak_img[12] =
+ {0x03FC, 0x0606, 0x0C03,
+	 0x0B9D, 0x0B9D, 0x0999,
+	 0x0C03, 0x070E, 0x01F8,
+ 0x0158, 0x01A8, 0x00F0};
+ 
+ unsigned short block_img[12] =
+ {0x0AAB, 0x0557, 0x3FF,
+	 0x020F, 0x0217, 0x020F,
+	 0x0207, 0x022F, 0x0257,
+ 0x03FF, 0x0557, 0x0AAB};
+
+unsigned char displayMatrix[48][84];
+
+const unsigned TILESIZE = 12;
+void transferObjToDis() {
+	unsigned short tempTileData = 0x0000;
+	for(unsigned char y = 0; y < 3; y++) {
+		for(unsigned char x = 0; x < 7; x++) {
+			switch(objectLocMatrix[y][x]) {
+				case OBJEmpty:
+				for(unsigned char tileY = 0; tileY < TILESIZE; tileY++) {
+					tempTileData = 0x0000;
+					for(unsigned char tileX = 0; tileX < TILESIZE; tileX++) {
+						displayMatrix[y*TILESIZE + tileY][x*TILESIZE + tileX] = 0x01 & tempTileData;
+						tempTileData = tempTileData >> 1;
+					}
+				}
+				break;
+				
+				case OBJWall:
+				for(unsigned char tileY = 0; tileY < TILESIZE; tileY++) {
+					tempTileData = wall_img[tileY];
+					for(unsigned char tileX = 0; tileX < TILESIZE; tileX++) {
+						displayMatrix[y*TILESIZE + tileY][x*TILESIZE + tileX] = 0x01 & tempTileData;
+						tempTileData = tempTileData >> 1;
+					}
+				}
+				break;
+				
+				case OBJBlock:
+				for(unsigned char tileY = 0; tileY < TILESIZE; tileY++) {
+					tempTileData = block_img[tileY];
+					for(unsigned char tileX = 0; tileX < TILESIZE; tileX++) {
+						displayMatrix[y*TILESIZE + tileY][x*TILESIZE + tileX] = 0x01 & tempTileData;
+						tempTileData = tempTileData >> 1;
+					}
+				}
+				break;
+				
+				case OBJPlayer:
+				for(unsigned char tileY = 0; tileY < TILESIZE; tileY++) {
+					tempTileData = bombperson_img[tileY];
+					for(unsigned char tileX = 0; tileX < TILESIZE; tileX++) {
+						displayMatrix[y*TILESIZE + tileY][x*TILESIZE + tileX] = 0x01 & tempTileData;
+						tempTileData = tempTileData >> 1;
+					}
+				}
+				break;
+				
+				case OBJBomb:
+				for(unsigned char tileY = 0; tileY < TILESIZE; tileY++) {
+					tempTileData = bomb_img[tileY];
+					for(unsigned char tileX = 0; tileX < TILESIZE; tileX++) {
+						displayMatrix[y*TILESIZE + tileY][x*TILESIZE + tileX] = 0x01 & tempTileData;
+						tempTileData = tempTileData >> 1;
+					}
+				}
+				break;
+				
+				case OBJEnemy:
+				for(unsigned char tileY = 0; tileY < TILESIZE; tileY++) {
+					tempTileData = enemy_img[tileY];
+					for(unsigned char tileX = 0; tileX < TILESIZE; tileX++) {
+						displayMatrix[y*TILESIZE + tileY][x*TILESIZE + tileX] = 0x01 & tempTileData;
+						tempTileData = tempTileData >> 1;
+					}
+				}
+				break;
+				
+				default:
+				for(unsigned char tileY = 0; tileY < TILESIZE; tileY++) {
+					for(unsigned char tileX = 0; tileX < TILESIZE; tileX++) {
+						displayMatrix[y*TILESIZE + tileY][x*TILESIZE + tileX] = 0;
+						tempTileData = tempTileData >> 1;
+					}
+				}
+				break;
+			}
+		}
+	}
+}
+
+/*void checkValidMovement(struct playerObj currentPlayer) {
+	if(currentPlayer.playerPosX != 6 && (SNESOutput & 0x0080) == 0x0080) {
+		if(objectLocMatrix[currentPlayer.playerPosY][(currentPlayer.playerPosX + 1)] == OBJEmpty){
+			objectLocMatrix[currentPlayer.playerPosY][currentPlayer.playerPosX] = OBJEmpty;
+			currentPlayer.playerPosX = currentPlayer.playerPosX + 1;
+			objectLocMatrix[currentPlayer.playerPosY][currentPlayer.playerPosX] = OBJPlayer;
+		}
+	}
+	else if(currentPlayer.playerPosX != 0 && (SNESOutput & 0x0040) == 0x0040) {
+		if(objectLocMatrix[currentPlayer.playerPosY][(currentPlayer.playerPosX - 1)] == OBJEmpty){
+			objectLocMatrix[currentPlayer.playerPosY][currentPlayer.playerPosX] = OBJEmpty;
+			currentPlayer.playerPosX = currentPlayer.playerPosX - 1;
+			objectLocMatrix[currentPlayer.playerPosY][currentPlayer.playerPosX] = OBJPlayer;
+		}
+	}
+	else if(currentPlayer.playerPosY != 0 && (SNESOutput & 0x0010) == 0x0010) {
+		if(objectLocMatrix[currentPlayer.playerPosY - 1][(currentPlayer.playerPosX)] == OBJEmpty){
+			objectLocMatrix[currentPlayer.playerPosY][currentPlayer.playerPosX] = OBJEmpty;
+			currentPlayer.playerPosY = currentPlayer.playerPosY - 1;
+			objectLocMatrix[currentPlayer.playerPosY][currentPlayer.playerPosX] = OBJPlayer;
+		}
+	}
+	else if(currentPlayer.playerPosY != 2 && (SNESOutput & 0x0020) == 0x0020) {
+		if(objectLocMatrix[currentPlayer.playerPosY + 1][(currentPlayer.playerPosX)] == OBJEmpty){
+			objectLocMatrix[currentPlayer.playerPosY][currentPlayer.playerPosX] = OBJEmpty;
+			currentPlayer.playerPosY = currentPlayer.playerPosY + 1;
+			objectLocMatrix[currentPlayer.playerPosY][currentPlayer.playerPosX] = OBJPlayer;
+		}
+	}
+};*/
+
+
+enum GameLogicStates{GLogicStart, GLogicInit, GLogicMenu, GLogicPlaying};
+unsigned char TickGameLogic(unsigned char state) {
+	switch(state) {
+		case GLogicStart:
+		state = GLogicInit;
+		break;
+		
+		case GLogicInit:
+		state = GLogicMenu;
+		break;
+		
+		case GLogicMenu:
+		state = GLogicPlaying;
+		break;
+		
+		case GLogicPlaying:
+		break;
+		
+		default:
+		state = GLogicStart;
+		break;
+	}
+	switch(state) {
+			case GLogicInit: 
+			break;
+			
+			case GLogicMenu:
+			for(unsigned char tempY = 0; tempY < 3;tempY++) {
+				for(unsigned char tempX = 0; tempX < 7;tempX++) {
+					objectLocMatrix[tempY][tempX] = OBJEmpty;
+				}
+			}
+			objectLocMatrix[1][1] = OBJBlock;
+			objectLocMatrix[1][3] = OBJBlock;
+			objectLocMatrix[1][5] = OBJBlock;
+			//objectLocMatrix[0][2] = OBJWall;
+			objectLocMatrix[2][0] = OBJWall;
+			objectLocMatrix[1][6] = OBJWall;
+			objectLocMatrix[0][0] = OBJPlayer;
+			player1.playerPosX = 0;
+			player1.playerPosY = 0;
+			player1.isBombPlaced = 0;
+			transferObjToDis();
+			break;
+			
+			case GLogicPlaying:
+			//Input and Actions
+			if(player1.isBombPlaced == 0 && (SNESOutput & 0x0800) == 0x0800) {
+				player1.isBombPlaced = 1;
+				player1.bombPosX = player1.playerPosX;
+				player1.bombPosY = player1.playerPosY;
+				player1.bombCount = 0;
+			}
+			if(player1.playerPosX != 6 && (SNESOutput & 0x0010) == 0x0010) {
+				if(objectLocMatrix[player1.playerPosY][(player1.playerPosX + 1)] == OBJEmpty){
+					objectLocMatrix[player1.playerPosY][player1.playerPosX] = OBJEmpty;
+					player1.playerPosX = player1.playerPosX + 1;
+					objectLocMatrix[player1.playerPosY][player1.playerPosX] = OBJPlayer;
+				}
+			}
+			else if(player1.playerPosX != 0 && (SNESOutput & 0x0020) == 0x0020) {
+				if(objectLocMatrix[player1.playerPosY][(player1.playerPosX - 1)] == OBJEmpty){
+					objectLocMatrix[player1.playerPosY][player1.playerPosX] = OBJEmpty;
+					player1.playerPosX = player1.playerPosX - 1;
+					objectLocMatrix[player1.playerPosY][player1.playerPosX] = OBJPlayer;
+				}
+			}
+			else if(player1.playerPosY != 0 && (SNESOutput & 0x0080) == 0x0080) {
+				if(objectLocMatrix[player1.playerPosY - 1][(player1.playerPosX)] == OBJEmpty){
+					objectLocMatrix[player1.playerPosY][player1.playerPosX] = OBJEmpty;
+					player1.playerPosY = player1.playerPosY - 1;
+					objectLocMatrix[player1.playerPosY][player1.playerPosX] = OBJPlayer;
+				}
+			}
+			else if(player1.playerPosY != 2 && (SNESOutput & 0x0040) == 0x0040) {
+				if(objectLocMatrix[player1.playerPosY + 1][(player1.playerPosX)] == OBJEmpty){
+					objectLocMatrix[player1.playerPosY][player1.playerPosX] = OBJEmpty;
+					player1.playerPosY = player1.playerPosY + 1;
+					objectLocMatrix[player1.playerPosY][player1.playerPosX] = OBJPlayer;
+				}
+			}
+			if((player1.playerPosX != player1.bombPosX || player1.playerPosY != player1.bombPosY) && player1.isBombPlaced != 0) {
+				objectLocMatrix[player1.bombPosY][player1.bombPosX] = OBJBomb;
+			}
+			/*if(player1.bombCount < BOMBPERIOD && player1.isBombPlaced != 0) {
+				objectLocMatrix[player1.bombPosY][player1.bombPosX] = OBJBomb;
+			}*/
+			transferObjToDis();
+			break;
+			
+			default:
+			break;
+	}
+	return state;
+}
+
+void matrixToDisplay() {
+	for(unsigned char y = 0; y < 48;y++) {
+		for(unsigned char x = 0; x < 84; x++) {
+			nokia_lcd_set_pixel(x,y, displayMatrix[y][x]);
+		}
+	}
+}
+
+enum LCDDisplayState{LCDDisplayStart, LCDDisplayInit, LCDDisplayRunning};
+	
+unsigned char TickLCDDisplay (unsigned char state) {
+	switch(state) {
+		case LCDDisplayStart:
+		state = LCDDisplayInit;
+		break;
+		
+		case LCDDisplayInit:
+		state = LCDDisplayRunning;
+		break;
+		
+		case LCDDisplayRunning:
+		break;
+		
+		default:
+		state = LCDDisplayStart;
+		break;
+	}
+	switch(state) {
+		case LCDDisplayInit:
+		nokia_lcd_init();
+		nokia_lcd_clear();
+		nokia_lcd_render();
+		break;
+		
+		case LCDDisplayRunning:
+		nokia_lcd_clear();
+		
+		matrixToDisplay();
+		
+		nokia_lcd_render();
+		break;
+		
+		default:
+		break;
+	}
+	return state;
+}
+
+
+
 // --------END User defined FSMs-----------------------------------------------
 
 
@@ -209,25 +519,27 @@ int main(){
 	
 	DDRB = 0xFF; PORTB = 0x00;
 	DDRD = 0xFF; PORTD = 0x00;
-
+	
 	// Period for the tasks
 	unsigned long int SMTickSNES_calc = 1;
-	unsigned long int SMTickLED_calc = 13;
+	unsigned long int SMTickLCD_calc = 100;
+	unsigned long int SMTickLogic_calc = 100;
 
 	//Calculating GCD
 	unsigned long int tmpGCD = 1;
-	tmpGCD = findGCD(SMTickSNES_calc, SMTickLED_calc);
-
+	tmpGCD = findGCD(SMTickSNES_calc, SMTickLCD_calc);
+	tmpGCD = findGCD(SMTickLogic_calc, tmpGCD);
 	//Greatest common divisor for all tasks or smallest time unit for tasks.
 	unsigned long int GCD = tmpGCD;
 
 	//Recalculate GCD periods for scheduler
 	unsigned long int SMTickSNES_period = SMTickSNES_calc/GCD;
-	unsigned long int SMTickLED_period = SMTickLED_calc/GCD;
+	unsigned long int SMTickLCD_period = SMTickLCD_calc/GCD;
+	unsigned long int SMTickLogic_period = SMTickLogic_calc/GCD;
 
 	//Declare an array of tasks 
-	static task task1, task2;
-	task *tasks[] = { &task1, &task2};
+	static task task1, task2, task3;
+	task *tasks[] = { &task1, &task2, &task3};
 	const unsigned short numTasks = sizeof(tasks)/sizeof(task*);
 
 	// Task 1
@@ -237,9 +549,14 @@ int main(){
 	task1.TickFct = &TickSNESControl;//Function pointer for the tick.
 	
 	task2.state = -1;//Task initial state.
-	task2.period = SMTickLED_calc;//Task Period.
-	task2.elapsedTime = SMTickLED_period;//Task current elapsed time.
-	task2.TickFct = &TickLED;//Function pointer for the tick.
+	task2.period = SMTickLCD_calc;//Task Period.
+	task2.elapsedTime = SMTickLCD_period;//Task current elapsed time.
+	task2.TickFct = &TickLCDDisplay;//Function pointer for the tick.
+	
+	task3.state = -1;//Task initial state.
+	task3.period = SMTickLogic_calc;//Task Period.
+	task3.elapsedTime = SMTickLogic_period;//Task current elapsed time.
+	task3.TickFct = &TickGameLogic;//Function pointer for the tick.
 	
 	// Set the timer and turn it on
 	TimerSet(GCD);
