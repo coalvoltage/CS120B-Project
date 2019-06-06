@@ -16,51 +16,7 @@
 #include <stdio.h>
 #include <io.c>
 #include <util/delay.h>
-#include <avr/eeprom.h>
-#include "SNES.c"
 #include "nokia5110.h"
-
-
-// 0.954 hz is lowest frequency possible with this function,
-// based on settings in PWM_on()
-// Passing in 0 as the frequency will stop the speaker from generating sound
-void set_PWM(double frequency) {
-	static double current_frequency; // Keeps track of the currently set frequency
-	// Will only update the registers when the frequency changes, otherwise allows
-	// music to play uninterrupted.
-	if (frequency != current_frequency) {
-		if (!frequency) { TCCR0B &= 0x08; } //stops timer/counter
-		else { TCCR0B |= 0x03; } // resumes/continues timer/counter
-		
-		// prevents OCR3A from overflowing, using prescaler 64
-		// 0.954 is smallest frequency that will not result in overflow
-		if (frequency < 0.954) { OCR0A = 0xFFFF; }
-		
-		// prevents OCR0A from underflowing, using prescaler 64                    // 31250 is largest frequency that will not result in underflow
-		else if (frequency > 31250) { OCR0A = 0x0000; }
-		
-		// set OCR3A based on desired frequency
-		else { OCR0A = (short)(8000000 / (128 * frequency)) - 1; }
-
-		TCNT0 = 0; // resets counter
-		current_frequency = frequency; // Updates the current frequency
-	}
-}
-
-void PWM_on() {
-	TCCR0A = (1 << WGM02) | (1 << WGM00) | (1 << COM0A0);
-	// COM3A0: Toggle PB3 on compare match between counter and OCR0A
-	TCCR0B = (1 << WGM02) | (1 << CS01) | (1 << CS00);
-	// WGM02: When counter (TCNT0) matches OCR0A, reset counter
-	// CS01 & CS30: Set a prescaler of 64
-	set_PWM(0);
-}
-
-void PWM_off() {
-	TCCR0A = 0x00;
-	TCCR0B = 0x00;
-}
-
 
 //--------Find GCD function --------------------------------------------------
 unsigned long int findGCD(unsigned long int a, unsigned long int b)
@@ -91,29 +47,120 @@ typedef struct _task {
     int (*TickFct)(int); //Task tick function
 } task;
 
+enum SNESStates {SNESStart, SNESInit, SNESWait, SNESLatch, SNESLatchAfter, SNESData, SNESClock, SNESFinish};
+const unsigned short SNESDELAYWAIT = 6;
+const unsigned short SNESDELAYCLK = 12;
+
+unsigned short countSNESControl;
 unsigned short dataSNESControl;
-enum SNESStates {SNESStart, SNESRead};
 unsigned char TickSNESControl(unsigned char state) {
-	switch(state) {
+	
+	unsigned char SNESPins;
+	unsigned char S2;
+	unsigned char S3;
+	unsigned short S4;
+	//LEDSpecial = 0x00;
+	SNESPins = (~PINA);
+	S4 = (SNESPins & 0x0004) >> 2;
+	//Transition
+	switch (state) {
 		case SNESStart:
-		state = SNESRead;
+		state = SNESInit;
 		break;
 		
-		case SNESRead:
+		case SNESInit:
+		state = SNESWait;
+		break;
+		
+		case SNESWait:
+		if(countSNESControl >= SNESDELAYWAIT) {
+			state = SNESLatch;
+		}
+		//LEDSpecial = 0xF0;
+		break;
+		
+		case SNESLatch:
+		state = SNESLatchAfter;
+		break;
+		
+		case SNESLatchAfter:
+		state = SNESData;
+		break;
+		
+		case SNESData:
+		state = SNESClock;
+		break;
+		
+		case SNESClock:
+		if(countSNESControl >= SNESDELAYCLK) {
+			state = SNESFinish;
+		}
+		else {
+			state = SNESData;
+		}
+		break;
+		
+		case SNESFinish:
+		state = SNESWait;
 		break;
 		
 		default:
 		state = SNESStart;
 		break;
 	}
-	switch(state) {
-			case SNESRead:
-			SNESOutput = SNES_Read();
-			break;
-			
-			default:
-			break;
+	//Action
+	switch (state) {
+		case SNESInit:
+		countSNESControl = 0;
+		SNESOutput = 0;
+		dataSNESControl = 0;
+		break;
+		
+		case SNESWait:
+		countSNESControl++;
+		dataSNESControl = 0x0000;
+		S3 = 0;
+		S2 = 0;
+		break;
+		
+		case SNESLatch:
+		S3 = 1;
+		S2 = 0;
+		countSNESControl = 0;
+		break;
+		
+		case SNESLatchAfter:
+		S3 = 0;
+		S2 = 0;
+		break;
+		
+		case SNESData:
+		S2 = 0;
+		S3 = 0;
+		dataSNESControl = dataSNESControl | S4;
+		break;
+		
+		case SNESClock:
+		countSNESControl++;
+		S2 = 1;
+		S3 = 0;
+		if(countSNESControl < SNESDELAYCLK) {
+			dataSNESControl = dataSNESControl<<1;
+		}
+		break;
+		
+		case SNESFinish:
+		countSNESControl = 0;
+		SNESOutput = dataSNESControl;
+		break;
+		
+		default:
+		break;
 	}
+	S3 = S3 << 1;
+	S4 = S4 << 2;
+	SNESPins = 0x00 | S2 | S3 | S4;
+	PORTA = SNESPins;
 	return state;
 }
 
@@ -214,19 +261,7 @@ unsigned short bombperson_img[12] =
 	 0x0861, 0x0B6D, 0x0861,
  0x0861, 0x0861, 0x0FFF};
 
-unsigned char levelDatabase[3][3][7]= {
-					{{OBJPlayer, OBJEmpty, OBJWall, OBJEmpty, OBJEmpty, OBJEmpty, OBJEmpty},
-					{OBJEmpty, OBJBlock, OBJEmpty, OBJBlock, OBJEmpty, OBJBlock, OBJWall},
-					{OBJHidden, OBJEmpty, OBJEmpty, OBJEmpty, OBJEmpty, OBJEmpty, OBJEmpty}},
-						
-					{{OBJPlayer, OBJEmpty, OBJEmpty, OBJEmpty, OBJEmpty, OBJEmpty, OBJEmpty},
-					{OBJEmpty, OBJBlock, OBJEmpty, OBJBlock, OBJEmpty, OBJBlock, OBJEmpty},
-					{OBJEmpty, OBJEmpty, OBJEmpty, OBJHidden, OBJEmpty, OBJEmpty, OBJEmpty}},
-	
-					{{OBJPlayer, OBJEmpty, OBJEmpty, OBJEmpty, OBJEmpty, OBJEmpty, OBJEmpty},
-					{OBJEmpty, OBJBlock, OBJEmpty, OBJBlock, OBJEmpty, OBJBlock, OBJEmpty},
-					{OBJEmpty, OBJEmpty, OBJEmpty, OBJEmpty, OBJEmpty, OBJEmpty, OBJHidden}}
-					};
+
 unsigned char displayMatrix[48][84];
 
 const unsigned TILESIZE = 12;
@@ -338,81 +373,153 @@ void transferObjToDis() {
 	}
 }
 
-unsigned char vibrateQueue[3];
-char vibrateQueueSize = 0;
-char vibrateQueueStart = 0;
-char vibrateQueueEnd = 0;
-const char VIB_QUEUE_MAX = 3;
-unsigned short vibrateDuration = 0;
-unsigned short PWMCount = 0;
-unsigned short PWMOnPeriod = 2;
-unsigned short PWMOffPeriod = 8;
-
-char rumbleMes = 0;
-enum PWMMotorState {PWMMotorStart, PWMMotorInit, PWMMotorWait, PWMMotorGetQueueData, PWMMotorOn, PWMMotorOff};
-
-unsigned char TickPWMMotor(unsigned char state) {
-	switch(state) {
-		case PWMMotorStart:
-		state = PWMMotorInit;
-		break;
-		
-		case PWMMotorInit:
-		
-		state = PWMMotorOn;
-		break;
-		
-		case PWMMotorOn:
-		if(PWMCount >= 5) {
-			state = PWMMotorOff;
-			PWMCount = 0;
-		}
-		break;
-		
-		case PWMMotorOff:
-		if(PWMCount >= 5) {
-			state = PWMMotorOn;
-			PWMCount = 0;
-		}
-		break;
-		
-		default:
-		state = PWMMotorStart;
-		break;
-	}
-	switch(state) {
-			case PWMMotorInit:
+void SNESControllerFunct() {
+	unsigned char SNESPins;
+	unsigned char S2;
+	unsigned char S3;
+	unsigned short S4;
+	unsigned char done = 0;
+	
+	unsigned char state = -1;
+	SNESPins = (~PINA);
+	S4 = (SNESPins & 0x0004) >> 2;
+	while(done != 0) {
+		SNESPins = (~PINA);
+		S4 = (SNESPins & 0x0004) >> 2;
+		//Transition
+		switch (state) {
+			case SNESStart:
+			state = SNESInit;
 			break;
 			
-			case PWMMotorOn:
-			if((SNESOutput & 0x4000) == 0x4000) {
-				PORTB = 0xFFFF;
-				rumbleMes = 1;
-			}
-			else {
-				PORTB = 0x0000;
-				rumbleMes = 0;
-			}
-			PWMCount = PWMCount + 1;
+			case SNESInit:
+			state = SNESWait;
 			break;
 			
-			case PWMMotorOff:
-			if((SNESOutput & 0x4000) == 0x4000) {
-				PORTB = 0x0000;
-				rumbleMes = 1;
+			case SNESWait:
+			if(countSNESControl >= SNESDELAYWAIT) {
+				state = SNESLatch;
+			}
+			//LEDSpecial = 0xF0;
+			break;
+			
+			case SNESLatch:
+			state = SNESLatchAfter;
+			break;
+			
+			case SNESLatchAfter:
+			state = SNESData;
+			break;
+			
+			case SNESData:
+			state = SNESClock;
+			break;
+			
+			case SNESClock:
+			if(countSNESControl >= SNESDELAYCLK) {
+				state = SNESFinish;
 			}
 			else {
-				PORTB = 0x0000;
-				rumbleMes = 0;
+				state = SNESData;
 			}
-			PWMCount = PWMCount + 1;
+			break;
+			
+			case SNESFinish:
+			state = SNESWait;
+			break;
+			
+			default:
+			state = SNESStart;
+			break;
+		}
+		//Action
+		switch (state) {
+			case SNESInit:
+			countSNESControl = 0;
+			SNESOutput = 0;
+			dataSNESControl = 0;
+			break;
+			
+			case SNESWait:
+			countSNESControl++;
+			dataSNESControl = 0x0000;
+			S3 = 0;
+			S2 = 0;
+			break;
+			
+			case SNESLatch:
+			S3 = 1;
+			S2 = 0;
+			countSNESControl = 0;
+			break;
+			
+			case SNESLatchAfter:
+			S3 = 0;
+			S2 = 0;
+			break;
+			
+			case SNESData:
+			S2 = 0;
+			S3 = 0;
+			dataSNESControl = dataSNESControl | S4;
+			break;
+			
+			case SNESClock:
+			countSNESControl++;
+			S2 = 1;
+			S3 = 0;
+			if(countSNESControl < SNESDELAYCLK) {
+				dataSNESControl = dataSNESControl<<1;
+			}
+			break;
+			
+			case SNESFinish:
+			countSNESControl = 0;
+			SNESOutput = dataSNESControl;
+			done = 1;
 			break;
 			
 			default:
 			break;
+		}
+		S3 = S3 << 1;
+		S4 = S4 << 2;
+		SNESPins = 0x00 | S2 | S3 | S4;
+		PORTA = SNESPins;
+		delay_ms(1);
 	}
-	return state;
 }
+
+/*void checkValidMovement(struct playerObj currentPlayer) {
+	if(currentPlayer.playerPosX != 6 && (SNESOutput & 0x0080) == 0x0080) {
+		if(objectLocMatrix[currentPlayer.playerPosY][(currentPlayer.playerPosX + 1)] == OBJEmpty){
+			objectLocMatrix[currentPlayer.playerPosY][currentPlayer.playerPosX] = OBJEmpty;
+			currentPlayer.playerPosX = currentPlayer.playerPosX + 1;
+			objectLocMatrix[currentPlayer.playerPosY][currentPlayer.playerPosX] = OBJPlayer;
+		}
+	}
+	else if(currentPlayer.playerPosX != 0 && (SNESOutput & 0x0040) == 0x0040) {
+		if(objectLocMatrix[currentPlayer.playerPosY][(currentPlayer.playerPosX - 1)] == OBJEmpty){
+			objectLocMatrix[currentPlayer.playerPosY][currentPlayer.playerPosX] = OBJEmpty;
+			currentPlayer.playerPosX = currentPlayer.playerPosX - 1;
+			objectLocMatrix[currentPlayer.playerPosY][currentPlayer.playerPosX] = OBJPlayer;
+		}
+	}
+	else if(currentPlayer.playerPosY != 0 && (SNESOutput & 0x0010) == 0x0010) {
+		if(objectLocMatrix[currentPlayer.playerPosY - 1][(currentPlayer.playerPosX)] == OBJEmpty){
+			objectLocMatrix[currentPlayer.playerPosY][currentPlayer.playerPosX] = OBJEmpty;
+			currentPlayer.playerPosY = currentPlayer.playerPosY - 1;
+			objectLocMatrix[currentPlayer.playerPosY][currentPlayer.playerPosX] = OBJPlayer;
+		}
+	}
+	else if(currentPlayer.playerPosY != 2 && (SNESOutput & 0x0020) == 0x0020) {
+		if(objectLocMatrix[currentPlayer.playerPosY + 1][(currentPlayer.playerPosX)] == OBJEmpty){
+			objectLocMatrix[currentPlayer.playerPosY][currentPlayer.playerPosX] = OBJEmpty;
+			currentPlayer.playerPosY = currentPlayer.playerPosY + 1;
+			objectLocMatrix[currentPlayer.playerPosY][currentPlayer.playerPosX] = OBJPlayer;
+		}
+	}
+};*/
 
 
 struct explodeNode {
@@ -423,26 +530,12 @@ struct explodeNode {
 struct explodeNode explodeStack[10];
 unsigned char explodeStackSize;
 
-unsigned short highScore;
-uint16_t* EEPROM_ADDRESS_0 = 0x0000;
-
-
-unsigned short tempScore;
-unsigned char displayScore[3];
-
-unsigned short gameTimer;
-unsigned char gameTimerCountSecond;
-const unsigned char gameTimerCountSecondPeriod = 10;
-const unsigned short ROUNDPERIOD = 20;
-unsigned char displayGameTimer[3];
+unsigned char highScore;
+unsigned char tempScore;
 
 unsigned char gameOver;
 unsigned char levelFinish;
-unsigned char levelCount;
-
-enum GameLogicStates{GLogicStart, GLogicInit, GLogicMenu, GLogicLevelInit, GLogicPlaying, GLogicGameOver, GLogicLevelComplete, GLogicNextLevel, GLogicRestartLevel, GLogicWin};
-	
-unsigned char currentGameState = GLogicMenu;
+enum GameLogicStates{GLogicStart, GLogicInit, GLogicMenu, GLogicLevelInit, GLogicPlaying, GLogicGameOver, GLogicNextLevel};
 unsigned char TickGameLogic(unsigned char state) {
 	switch(state) {
 		case GLogicStart:
@@ -454,9 +547,7 @@ unsigned char TickGameLogic(unsigned char state) {
 		break;
 		
 		case GLogicMenu:
-		if((SNESOutput & 0x1000) == 0x1000){
-			state = GLogicLevelInit;
-		}
+		state = GLogicLevelInit;
 		break;
 		
 		case GLogicLevelInit:
@@ -464,34 +555,12 @@ unsigned char TickGameLogic(unsigned char state) {
 		break;
 		
 		case GLogicPlaying:
-		if(levelFinish != 0) {
-			state = GLogicNextLevel;
-		}
-		else if(gameOver != 0) {
+		if(gameOver != 0 || levelFinish != 0) {
 			state = GLogicGameOver;
 		}
 		break;
 		
-		case GLogicLevelComplete:
-		if((SNESOutput & 0x1000) == 0x1000){
-			state = GLogicPlaying;
-		}
-		break;
-		
-		case GLogicNextLevel:
-		state= GLogicPlaying;
-		break;
-		
-		case GLogicRestartLevel:
-		if((SNESOutput & 0x1000) == 0x1000){
-			state = GLogicPlaying;
-		}
-		break;
-		
 		case GLogicGameOver:
-		if((SNESOutput &0x1000) == 0x1000){
-			state = GLogicMenu;
-		}
 		break;
 		
 		default:
@@ -499,86 +568,46 @@ unsigned char TickGameLogic(unsigned char state) {
 		break;
 	}
 	switch(state) {
-			case GLogicInit:
-			//SNES_init();
-			highScore = 0;
-			break;
-			
-			case GLogicMenu:
-			currentGameState = GLogicMenu;
-			displayScore[2] = (highScore % 10) + '0';
-			displayScore[1] = ((highScore / 10) % 10) + '0';
-			displayScore[0] = ((highScore / 100) % 10) + '0';
-			if((SNESOutput & 0x0010) == 0x0010) {
-				//Save Score = "R"
-				eeprom_write_word(EEPROM_ADDRESS_0, highScore);
-			}
-			else if((SNESOutput & 0x0020) == 0x0020) {
-				//Load Score = "L"
-				highScore = eeprom_read_word(EEPROM_ADDRESS_0);
-			}
-			else if((SNESOutput & 0x2000) == 0x2000) {
-				//Clear Score = "SELECT"
-				eeprom_write_word(EEPROM_ADDRESS_0, 0x0000);
-			}
+			case GLogicInit: 
 			break;
 			
 			case GLogicLevelInit:
 			for(unsigned char tempY = 0; tempY < 3;tempY++) {
 				for(unsigned char tempX = 0; tempX < 7;tempX++) {
-					objectLocMatrix[tempY][tempX] = levelDatabase[0][tempY][tempX];
+					objectLocMatrix[tempY][tempX] = OBJEmpty;
 				}
 			}
+			//Initalize Level
+			objectLocMatrix[1][1] = OBJBlock;
+			objectLocMatrix[1][3] = OBJBlock;
+			objectLocMatrix[1][5] = OBJBlock;
+			//objectLocMatrix[0][2] = OBJWall;
+			objectLocMatrix[2][0] = OBJHidden;
+			objectLocMatrix[1][6] = OBJWall;
+			objectLocMatrix[0][0] = OBJPlayer;
 			
 			//Reset Game values
 			player1.playerPosX = 0;
 			player1.playerPosY = 0;
 			player1.isBombPlaced = 0;
 			
-			currentGameState = GLogicPlaying;
 			levelFinish = 0;
-			levelCount = 1;
 			gameOver = 0;
 			tempScore = 0;
-			gameTimer = ROUNDPERIOD;
-			gameTimerCountSecond = 0;
-			transferObjToDis();
-			break;
-			
-			case GLogicNextLevel:
-			levelCount = levelCount + 1;
-			
-			for(unsigned char tempY = 0; tempY < 3;tempY++) {
-				for(unsigned char tempX = 0; tempX < 7;tempX++) {
-					objectLocMatrix[tempY][tempX] = levelDatabase[levelCount - 1][tempY][tempX];
-				}
-			}
-			
-			//Reset Game values
-			player1.playerPosX = 0;
-			player1.playerPosY = 0;
-			player1.isBombPlaced = 0;
-			tempScore = tempScore + gameTimer;
-			
-			currentGameState = GLogicNextLevel;
-			levelFinish = 0;
-			gameOver = 0;
-			gameTimer = ROUNDPERIOD;
-			gameTimerCountSecond = 0;
 			transferObjToDis();
 			break;
 			
 			case GLogicPlaying:
 			
 			//Player Input and Actions
-			if(player1.isBombPlaced == 0 && (SNESOutput & 0x8000) == 0x8000) {
+			if(player1.isBombPlaced == 0 && (SNESOutput & 0x0800) == 0x0800) {
 				player1.isBombPlaced = 1;
 				player1.bombPosX = player1.playerPosX;
 				player1.bombPosY = player1.playerPosY;
 				player1.bombCount = 0;
 			}
 			unsigned char tempObj;
-			if(player1.playerPosX != 6 && (SNESOutput & 0x0100) == 0x0100) {
+			if(player1.playerPosX != 6 && (SNESOutput & 0x0010) == 0x0010) {
 				tempObj = objectLocMatrix[player1.playerPosY][(player1.playerPosX + 1)];
 				if(tempObj == OBJEmpty){
 					objectLocMatrix[player1.playerPosY][player1.playerPosX] = OBJEmpty;
@@ -592,7 +621,7 @@ unsigned char TickGameLogic(unsigned char state) {
 					levelFinish = 1;
 				}
 			}
-			else if(player1.playerPosX != 0 && (SNESOutput & 0x0200) == 0x0200) {
+			else if(player1.playerPosX != 0 && (SNESOutput & 0x0020) == 0x0020) {
 				tempObj = objectLocMatrix[player1.playerPosY][(player1.playerPosX - 1)];
 				if(tempObj == OBJEmpty){
 					objectLocMatrix[player1.playerPosY][player1.playerPosX] = OBJEmpty;
@@ -606,7 +635,7 @@ unsigned char TickGameLogic(unsigned char state) {
 					levelFinish = 1;
 				}
 			}
-			else if(player1.playerPosY != 0 && (SNESOutput & 0x0800) == 0x0800) {
+			else if(player1.playerPosY != 0 && (SNESOutput & 0x0080) == 0x0080) {
 				tempObj = objectLocMatrix[player1.playerPosY - 1][(player1.playerPosX)];
 				if(tempObj == OBJEmpty){
 					objectLocMatrix[player1.playerPosY][player1.playerPosX] = OBJEmpty;
@@ -620,7 +649,7 @@ unsigned char TickGameLogic(unsigned char state) {
 					levelFinish = 1;
 				}
 			}
-			else if(player1.playerPosY != 2 && (SNESOutput & 0x0400) == 0x0400) {
+			else if(player1.playerPosY != 2 && (SNESOutput & 0x0040) == 0x0040) {
 				tempObj = objectLocMatrix[player1.playerPosY + 1][(player1.playerPosX)];
 				if(tempObj == OBJEmpty){
 					objectLocMatrix[player1.playerPosY][player1.playerPosX] = OBJEmpty;
@@ -650,15 +679,6 @@ unsigned char TickGameLogic(unsigned char state) {
 			}
 			else if(player1.bombCount >= BOMBPERIOD && player1.isBombPlaced != 0) {
 				tempObj = objectLocMatrix[player1.bombPosY][(player1.bombPosX)];
-				vibrateQueue[vibrateQueueEnd] = 10;
-				if(vibrateQueueEnd >= vibrateQueueSize - 1) {
-					vibrateQueueEnd = 0;
-				}
-				else {
-					vibrateQueueEnd++;
-				}
-				vibrateQueueSize++;
-				
 				if(tempObj == OBJPlayer){
 					gameOver = 1;
 				}
@@ -754,34 +774,7 @@ unsigned char TickGameLogic(unsigned char state) {
 				player1.bombCount = 0;
 				player1.isBombPlaced = 0;
 			}
-			
 			transferObjToDis();
-			
-			displayScore[2] = (tempScore % 10) + '0';
-			displayScore[1] = ((tempScore / 10) % 10) + '0';
-			displayScore[0] = ((tempScore / 100) % 10) + '0';
-			if(gameTimerCountSecond >= gameTimerCountSecondPeriod) {
-				gameTimer = gameTimer - 1;
-				if(gameTimer == 0) {
-					gameOver = 1;
-				}
-				gameTimerCountSecond = 0;
-			}
-			else {
-				gameTimerCountSecond = gameTimerCountSecond + 1;
-			}
-			displayGameTimer[2] = (gameTimer % 10) + '0';
-			displayGameTimer[1] = ((gameTimer / 10) % 10) + '0';
-			displayGameTimer[0] = ((gameTimer / 100) % 10) + '0';
-			
-			
-			break;
-			
-			case GLogicGameOver:
-			currentGameState = GLogicGameOver;
-			if(highScore < tempScore) {
-				highScore = tempScore;
-			}
 			break;
 			
 			default:
@@ -796,103 +789,9 @@ void matrixToDisplay() {
 			nokia_lcd_set_pixel(x,y, displayMatrix[y][x]);
 		}
 	}
-	nokia_lcd_set_cursor(0,40);
-	nokia_lcd_write_char('S', 1);
-	nokia_lcd_set_cursor(10,40);
-	nokia_lcd_write_char(displayScore[0], 1);
-	nokia_lcd_set_cursor(15,40);
-	nokia_lcd_write_char(displayScore[1], 1);
-	nokia_lcd_set_cursor(20,40);
-	nokia_lcd_write_char(displayScore[2], 1);
-	
-	nokia_lcd_set_cursor(55,40);
-	nokia_lcd_write_char('T', 1);
-	nokia_lcd_set_cursor(65,40);
-	nokia_lcd_write_char(displayGameTimer[0], 1);
-	nokia_lcd_set_cursor(70,40);
-	nokia_lcd_write_char(displayGameTimer[1], 1);
-	nokia_lcd_set_cursor(75,40);
-	nokia_lcd_write_char(displayGameTimer[2], 1);
 }
 
-const char MENUMESSAGE1[] = "R:SAVE L:LOAD";
-const char MENUMESSAGE2[] = "SEL: CLEAR";
-const char RUMBLEMESSAGE1[] = "RUMBLING!";
-
-void menuDisplay() {
-	if(rumbleMes != 0) {
-		nokia_lcd_set_cursor(0,10);
-		nokia_lcd_write_string(RUMBLEMESSAGE1,1);
-	}
-	nokia_lcd_set_cursor(0,20);
-	nokia_lcd_write_string(MENUMESSAGE1,1);
-	nokia_lcd_set_cursor(0,30);
-	nokia_lcd_write_string(MENUMESSAGE2,1);
-	
-	nokia_lcd_set_cursor(0,40);
-	nokia_lcd_write_char('H', 1);
-	nokia_lcd_set_cursor(5,40);
-	nokia_lcd_write_char('i', 1);
-	nokia_lcd_set_cursor(10,40);
-	nokia_lcd_write_char('g', 1);
-	nokia_lcd_set_cursor(15,40);
-	nokia_lcd_write_char('h', 1);
-	
-	nokia_lcd_set_cursor(25,40);
-	nokia_lcd_write_char('S', 1);
-	nokia_lcd_set_cursor(30,40);
-	nokia_lcd_write_char('c', 1);
-	nokia_lcd_set_cursor(35,40);
-	nokia_lcd_write_char('o', 1);
-	nokia_lcd_set_cursor(40,40);
-	nokia_lcd_write_char('r', 1);
-	nokia_lcd_set_cursor(45,40);
-	nokia_lcd_write_char('e', 1);
-	nokia_lcd_set_cursor(50,40);
-	nokia_lcd_write_char(':', 1);
-	
-	nokia_lcd_set_cursor(60,40);
-	nokia_lcd_write_char(displayScore[0], 1);
-	nokia_lcd_set_cursor(65,40);
-	nokia_lcd_write_char(displayScore[1], 1);
-	nokia_lcd_set_cursor(70,40);
-	nokia_lcd_write_char(displayScore[2], 1);
-}
-
-const char LEVELMESSAGE1[] = "Level";
-const char LEVELMESSAGE2[] = "Completed";
-const char LEVELMESSAGE3[] = "Press Start";
-
-void levelBeatDisplay() {
-	nokia_lcd_set_cursor(0,10);
-	nokia_lcd_write_string(LEVELMESSAGE1,2);
-	nokia_lcd_set_cursor(48,10);
-	nokia_lcd_write_char(levelCount, 2);
-	nokia_lcd_set_cursor(0,20);
-	nokia_lcd_write_string(LEVELMESSAGE2,1);
-	nokia_lcd_set_cursor(0,40);
-	nokia_lcd_write_string(LEVELMESSAGE3,1);
-}
-
-const char GAMEOVERMESSAGE1[] = "Game Over";
-const char GAMEOVERMESSAGE2[] = "Score: ";
-const char GAMEOVERMESSAGE3[] = "Press Start";
-void gameOverDisplay() {
-	nokia_lcd_set_cursor(0,10);
-	nokia_lcd_write_string(GAMEOVERMESSAGE1,2);
-	nokia_lcd_set_cursor(0,20);
-	nokia_lcd_write_string(GAMEOVERMESSAGE2,1);
-	nokia_lcd_set_cursor(10,20);
-	nokia_lcd_write_char(displayScore[0], 1);
-	nokia_lcd_set_cursor(15,20);
-	nokia_lcd_write_char(displayScore[1], 1);
-	nokia_lcd_set_cursor(20,20);
-	nokia_lcd_write_char(displayScore[2], 1);
-	nokia_lcd_set_cursor(0,40);
-	nokia_lcd_write_string(GAMEOVERMESSAGE3,1);
-}
-
-enum LCDDisplayState{LCDDisplayStart, LCDDisplayInit,LCDDisplayMenu, LCDDisplayRunning, LCDDisplayGameOver};
+enum LCDDisplayState{LCDDisplayStart, LCDDisplayInit, LCDDisplayRunning};
 	
 unsigned char TickLCDDisplay (unsigned char state) {
 	switch(state) {
@@ -901,28 +800,10 @@ unsigned char TickLCDDisplay (unsigned char state) {
 		break;
 		
 		case LCDDisplayInit:
-		state = LCDDisplayMenu;
-		break;
-		
-		case LCDDisplayMenu:
-		if(currentGameState == GLogicPlaying) {
-			state = LCDDisplayRunning;
-		}
+		state = LCDDisplayRunning;
 		break;
 		
 		case LCDDisplayRunning:
-		if(currentGameState == GLogicMenu) {
-			state = LCDDisplayMenu;
-		}
-		else if(currentGameState == GLogicGameOver) {
-			state = LCDDisplayGameOver;
-		}
-		break;
-		
-		case LCDDisplayGameOver:
-		if(currentGameState == GLogicMenu) {
-			state = LCDDisplayMenu;
-		}
 		break;
 		
 		default:
@@ -931,17 +812,16 @@ unsigned char TickLCDDisplay (unsigned char state) {
 	}
 	switch(state) {
 		case LCDDisplayInit:
-		break;
-		
-		case LCDDisplayMenu:
+		nokia_lcd_init();
 		nokia_lcd_clear();
-		menuDisplay();
 		nokia_lcd_render();
 		break;
 		
 		case LCDDisplayRunning:
 		nokia_lcd_clear();
+		
 		matrixToDisplay();
+		
 		nokia_lcd_render();
 		break;
 		
@@ -950,6 +830,7 @@ unsigned char TickLCDDisplay (unsigned char state) {
 	}
 	return state;
 }
+
 
 
 // --------END User defined FSMs-----------------------------------------------
@@ -964,34 +845,26 @@ int main(){
 	DDRB = 0xFF; PORTB = 0x00;
 	DDRD = 0xFF; PORTD = 0x00;
 	
-	nokia_lcd_init();
-	nokia_lcd_clear();
-	nokia_lcd_render();
-	SNES_init();
 	// Period for the tasks
-	//unsigned long int SMTickSNES_calc = 1;
-	unsigned long int SMTickLCD_calc = 10;
-	unsigned long int SMTickLogic_calc = 10;
-	unsigned long int SMTickSNES_calc = 10;
-	unsigned long int SMTickPWMMotor_calc = 100;
+	unsigned long int SMTickSNES_calc = 1;
+	unsigned long int SMTickLCD_calc = 100;
+	unsigned long int SMTickLogic_calc = 100;
+
 	//Calculating GCD
 	unsigned long int tmpGCD = 1;
-	tmpGCD = findGCD(SMTickLogic_calc, SMTickLCD_calc);
-	tmpGCD = findGCD(SMTickSNES_calc, tmpGCD);
-	tmpGCD = findGCD(SMTickPWMMotor_calc, tmpGCD);
+	tmpGCD = findGCD(SMTickSNES_calc, SMTickLCD_calc);
+	tmpGCD = findGCD(SMTickLogic_calc, tmpGCD);
 	//Greatest common divisor for all tasks or smallest time unit for tasks.
 	unsigned long int GCD = tmpGCD;
 
 	//Recalculate GCD periods for scheduler
-	//unsigned long int SMTickSNES_period = SMTickSNES_calc/GCD;
+	unsigned long int SMTickSNES_period = SMTickSNES_calc/GCD;
 	unsigned long int SMTickLCD_period = SMTickLCD_calc/GCD;
 	unsigned long int SMTickLogic_period = SMTickLogic_calc/GCD;
-	unsigned long int SMTickSNES_period = SMTickSNES_calc/GCD;
-	unsigned long int SMTickPWMMotor_period = SMTickPWMMotor_calc/GCD;
-	
+
 	//Declare an array of tasks 
-	static task task1, task2, task3, task4;
-	task *tasks[] = {&task1, &task2, &task3, &task4};
+	static task task1, task2, task3;
+	task *tasks[] = { &task1, &task2, &task3};
 	const unsigned short numTasks = sizeof(tasks)/sizeof(task*);
 
 	// Task 1
@@ -1009,11 +882,6 @@ int main(){
 	task3.period = SMTickLogic_calc;//Task Period.
 	task3.elapsedTime = SMTickLogic_period;//Task current elapsed time.
 	task3.TickFct = &TickGameLogic;//Function pointer for the tick.
-	
-	task4.state = -1;
-	task4.period = SMTickPWMMotor_calc;
-	task4.elapsedTime = SMTickPWMMotor_period;
-	task4.TickFct = &TickPWMMotor;
 	
 	// Set the timer and turn it on
 	TimerSet(GCD);
