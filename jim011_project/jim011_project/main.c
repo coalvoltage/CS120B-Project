@@ -20,6 +20,95 @@
 #include "SNES.c"
 #include "nokia5110.h"
 
+#define NOTE_B0  31.0
+#define NOTE_C1  33.0
+#define NOTE_CS1 35.0
+#define NOTE_D1  37.0
+#define NOTE_DS1 39.0
+#define NOTE_E1  41.0
+#define NOTE_F1  44.0
+#define NOTE_FS1 46.0
+#define NOTE_G1  49.0
+#define NOTE_GS1 52.0
+#define NOTE_A1  55.0
+#define NOTE_AS1 58.0
+#define NOTE_B1  62.0
+#define NOTE_C2  65.0
+#define NOTE_CS2 69.0
+#define NOTE_D2  73.0
+#define NOTE_DS2 78.0
+#define NOTE_E2  82.0
+#define NOTE_F2  87.0
+#define NOTE_FS2 93.0
+#define NOTE_G2  98.0
+#define NOTE_GS2 104.0
+#define NOTE_A2  110.0
+#define NOTE_AS2 117.0
+#define NOTE_B2  123.0
+#define NOTE_C3  131.0
+#define NOTE_CS3 139.0
+#define NOTE_D3  147.0
+#define NOTE_DS3 156.0
+#define NOTE_E3  165.0
+#define NOTE_F3  175.0
+#define NOTE_FS3 185.0
+#define NOTE_G3  196.0
+#define NOTE_GS3 208.0
+#define NOTE_A3  220.0
+#define NOTE_AS3 233.0
+#define NOTE_B3  247.0
+#define NOTE_C4  262.0
+#define NOTE_CS4 277.0
+#define NOTE_D4  294.0
+#define NOTE_DS4 311.0
+#define NOTE_E4  330.0
+#define NOTE_F4  349.0
+#define NOTE_FS4 370.0
+#define NOTE_G4  392.0
+#define NOTE_GS4 415.0
+#define NOTE_A4  440.0
+#define NOTE_AS4 466.0
+#define NOTE_B4  494.0
+#define NOTE_C5  523.0
+#define NOTE_CS5 554.0
+#define NOTE_D5  587.0
+#define NOTE_DS5 622.0
+#define NOTE_E5  659.0
+#define NOTE_F5  698.0
+#define NOTE_FS5 740.0
+#define NOTE_G5  784.0
+#define NOTE_GS5 831.0
+#define NOTE_A5  880.0
+#define NOTE_AS5 932.0
+#define NOTE_B5  988.0
+#define NOTE_C6  1047.0
+#define NOTE_CS6 1109.0
+#define NOTE_D6  1175.0
+#define NOTE_DS6 1245.0
+#define NOTE_E6  1319.0
+#define NOTE_F6  1397.0
+#define NOTE_FS6 1480.0
+#define NOTE_G6  1568.0
+#define NOTE_GS6 1661.0
+#define NOTE_A6  1760.0
+#define NOTE_AS6 1865.0
+#define NOTE_B6  1976.0
+#define NOTE_C7  2093.0
+#define NOTE_CS7 2217.0
+#define NOTE_D7  2349.0
+#define NOTE_DS7 2489.0
+#define NOTE_E7  2637.0
+#define NOTE_F7  2794.0
+#define NOTE_FS7 2960.0
+#define NOTE_G7  3136.0
+#define NOTE_GS7 3322.0
+#define NOTE_A7  3520.0
+#define NOTE_AS7 3729.0
+#define NOTE_B7  3951.0
+#define NOTE_C8  4186.0
+#define NOTE_CS8 4435.0
+#define NOTE_D8  4699.0
+#define NOTE_DS8 4978.0
 
 // 0.954 hz is lowest frequency possible with this function,
 // based on settings in PWM_on()
@@ -345,12 +434,15 @@ char vibrateQueueEnd = 0;
 const char VIB_QUEUE_MAX = 3;
 unsigned short vibrateDuration;
 unsigned short vibrateQueueCount;
+
 unsigned short PWMCount = 0;
+unsigned char tempPWM;
 const unsigned short PWMOnPERIOD = 5;
 
 
 unsigned char rumbleMes = 0;
 unsigned char rumbleOn = 0;
+unsigned char tempC = 0;
 enum PWMMotorState {PWMMotorStart, PWMMotorInit, PWMMotorWait, PWMMotorGetQueueData, PWMMotorOn, PWMMotorOff};
 
 unsigned char TickPWMMotor(unsigned char state) {
@@ -384,15 +476,16 @@ unsigned char TickPWMMotor(unsigned char state) {
 	}
 	switch(state) {
 			case PWMMotorInit:
+			tempC = 0;
 			break;
 			
 			case PWMMotorOn:
 			if(rumbleOn) {
-				PORTB = 0xFFFF;
+				tempC = 0xFFFF;
 				rumbleMes = 1;
 			}
 			else {
-				PORTB = 0x0000;
+				tempC = 0x0000;
 				rumbleMes = 0;
 			}
 			PWMCount = PWMCount + 1;
@@ -400,11 +493,11 @@ unsigned char TickPWMMotor(unsigned char state) {
 			
 			case PWMMotorOff:
 			if(rumbleOn) {
-				PORTB = 0x0000;
+				tempC = 0x0000;
 				rumbleMes = 1;
 			}
 			else {
-				PORTB = 0x0000;
+				tempC = 0x0000;
 				rumbleMes = 0;
 			}
 			PWMCount = PWMCount + 1;
@@ -413,6 +506,7 @@ unsigned char TickPWMMotor(unsigned char state) {
 			default:
 			break;
 	}
+	PORTC = tempC;
 	return state;
 }
 
@@ -515,10 +609,22 @@ const unsigned char gameTimerCountSecondPeriod = 10;
 const unsigned short ROUNDPERIOD = 20;
 unsigned char displayGameTimer[3];
 
+unsigned char playerLives;
+const unsigned char LIVESAMOUNT = 1;
+
 unsigned char gameOver;
 unsigned char levelFinish;
 unsigned char levelCount;
 const unsigned char LEVELMAX = 3;
+
+//Sound
+double soundQueue[3];
+char soundQueueSize = 0;
+char soundQueueStart = 0;
+char soundQueueEnd = 0;
+const char SOUND_QUEUE_MAX = 3;
+const unsigned short soundDuration = 3;
+unsigned short soundQueueCount;
 
 enum GameLogicStates{GLogicStart, GLogicInit, GLogicMenu, GLogicLevelInit, GLogicPlaying, GLogicGameOver, GLogicLevelComplete, GLogicNextLevel, GLogicRestartLevel, GLogicWin};
 	
@@ -550,7 +656,10 @@ unsigned char TickGameLogic(unsigned char state) {
 		else if(levelFinish != 0 && levelCount >= LEVELMAX) {
 			state = GLogicWin;
 		}
-		else if(gameOver != 0) {
+		else if(gameOver != 0 && playerLives > 0) {
+			state = GLogicRestartLevel;
+		}
+		else if(gameOver != 0 && playerLives <= 0) {
 			state = GLogicGameOver;
 		}
 		break;
@@ -572,9 +681,7 @@ unsigned char TickGameLogic(unsigned char state) {
 		break;
 		
 		case GLogicRestartLevel:
-		if((SNESOutput & 0x1000) == 0x1000){
-			state = GLogicPlaying;
-		}
+		state = GLogicPlaying;
 		break;
 		
 		case GLogicGameOver:
@@ -637,6 +744,7 @@ unsigned char TickGameLogic(unsigned char state) {
 			tempScore = 0;
 			gameTimer = ROUNDPERIOD;
 			gameTimerCountSecond = 0;
+			playerLives = LIVESAMOUNT;
 			transferObjToDis();
 			break;
 			
@@ -676,6 +784,27 @@ unsigned char TickGameLogic(unsigned char state) {
 				highScore = tempScore;
 			}
 			menuInputDelayCount = 0;
+			break;
+			
+			case GLogicRestartLevel:
+			playerLives = playerLives - 1;
+			for(unsigned char tempY = 0; tempY < 3;tempY++) {
+				for(unsigned char tempX = 0; tempX < 7;tempX++) {
+					objectLocMatrix[tempY][tempX] = levelDatabase[levelCount - 1][tempY][tempX];
+				}
+			}
+			
+			//Reset Game values
+			player1.playerPosX = 0;
+			player1.playerPosY = 0;
+			player1.isBombPlaced = 0;
+			
+			currentGameState = GLogicPlaying;
+			levelFinish = 0;
+			gameOver = 0;
+			gameTimer = ROUNDPERIOD;
+			gameTimerCountSecond = 0;
+			transferObjToDis();
 			break;
 			
 			case GLogicPlaying:
@@ -747,7 +876,7 @@ unsigned char TickGameLogic(unsigned char state) {
 			if((player1.playerPosX != player1.bombPosX || player1.playerPosY != player1.bombPosY) && player1.isBombPlaced != 0) {
 				objectLocMatrix[player1.bombPosY][player1.bombPosX] = OBJBomb;
 			}
-			
+			//Enemy Ai
 			
 			//Check Bomb And Explosion Objs
 			while(explodeStackSize != 0) {
@@ -768,6 +897,15 @@ unsigned char TickGameLogic(unsigned char state) {
 					vibrateQueueEnd = vibrateQueueEnd + 1;
 				}
 				vibrateQueueSize = vibrateQueueSize + 1;
+				
+				soundQueue[soundQueueEnd] = NOTE_B0;
+				if(soundQueueEnd >= 2) {
+					soundQueueEnd = 0;
+				}
+				else {
+					soundQueueEnd = soundQueueEnd + 1;
+				}
+				soundQueueSize = soundQueueSize + 1;
 				
 				if(tempObj == OBJPlayer){
 					gameOver = 1;
@@ -796,6 +934,7 @@ unsigned char TickGameLogic(unsigned char state) {
 					}
 					else if(tempObj == OBJHidden){
 						objectLocMatrix[player1.bombPosY][(player1.bombPosX + 1)] = OBJDoor;
+						tempScore = tempScore + 5;
 					}
 					else if(tempObj == OBJPlayer){
 						gameOver = 1;
@@ -816,6 +955,7 @@ unsigned char TickGameLogic(unsigned char state) {
 					}
 					else if(tempObj == OBJHidden){
 						objectLocMatrix[player1.bombPosY][(player1.bombPosX - 1)] = OBJDoor;
+						tempScore = tempScore + 5;
 					}
 					else if(tempObj == OBJPlayer){
 						gameOver = 1;
@@ -836,6 +976,7 @@ unsigned char TickGameLogic(unsigned char state) {
 					}
 					else if(tempObj == OBJHidden){
 						objectLocMatrix[player1.bombPosY - 1][(player1.bombPosX)] = OBJDoor;
+						tempScore = tempScore + 5;
 					}
 					else if(tempObj == OBJPlayer){
 						gameOver = 1;
@@ -856,6 +997,7 @@ unsigned char TickGameLogic(unsigned char state) {
 					}
 					else if(tempObj == OBJHidden){
 						objectLocMatrix[player1.bombPosY + 1][(player1.bombPosX)] = OBJDoor;
+						tempScore = tempScore + 5;
 					}
 					else if(tempObj == OBJPlayer){
 						gameOver = 1;
@@ -916,6 +1058,13 @@ void matrixToDisplay() {
 	nokia_lcd_set_cursor(20,40);
 	nokia_lcd_write_char(displayScore[2], 1);
 	
+	nokia_lcd_set_cursor(30,40);
+	nokia_lcd_write_char('L', 1);
+	nokia_lcd_set_cursor(35,40);
+	nokia_lcd_write_char(':', 1);
+	nokia_lcd_set_cursor(40,40);
+	nokia_lcd_write_char('0' + playerLives, 1);
+	
 	nokia_lcd_set_cursor(55,40);
 	nokia_lcd_write_char('T', 1);
 	nokia_lcd_set_cursor(65,40);
@@ -928,13 +1077,13 @@ void matrixToDisplay() {
 
 const char MENUMESSAGE1[] = "R:SAVE L:LOAD";
 const char MENUMESSAGE2[] = "SEL: CLEAR";
-const char RUMBLEMESSAGE1[] = "RUMBLING!";
+const char MENUMESSAGE3[] = "B. Maze";
+//const char RUMBLEMESSAGE1[] = "RUMBLING!";
 
 void menuDisplay() {
-	if(rumbleMes != 0) {
-		nokia_lcd_set_cursor(0,10);
-		nokia_lcd_write_string(RUMBLEMESSAGE1,1);
-	}
+	nokia_lcd_set_cursor(0,0);
+	nokia_lcd_write_string(MENUMESSAGE3,2);
+	
 	nokia_lcd_set_cursor(0,20);
 	nokia_lcd_write_string(MENUMESSAGE1,1);
 	nokia_lcd_set_cursor(0,30);
@@ -985,7 +1134,7 @@ void levelBeatDisplay() {
 	nokia_lcd_write_string(LEVELMESSAGE3,1);
 }
 
-const char GAMEOVERMESSAGE1[] = "GAMEOVER";
+const char GAMEOVERMESSAGE1[] = "GameOver";
 const char GAMEOVERMESSAGE2[] = "Score:";
 const char GAMEOVERMESSAGE3[] = "Press Start";
 void gameOverDisplay() {
@@ -1115,6 +1264,220 @@ unsigned char TickLCDDisplay (unsigned char state) {
 	return state;
 }
 
+const unsigned char MAXINDEX = 78;
+//Mario main theme melody
+double melody[78] = {
+	NOTE_E7, NOTE_E7, 0, NOTE_E7,
+	0, NOTE_C7, NOTE_E7, 0,
+	NOTE_G7, 0, 0,  0,
+	NOTE_G6, 0, 0, 0,
+
+	NOTE_C7, 0, 0, NOTE_G6,
+	0, 0, NOTE_E6, 0,
+	0, NOTE_A6, 0, NOTE_B6,
+	0, NOTE_AS6, NOTE_A6, 0,
+
+	NOTE_G6, NOTE_E7, NOTE_G7,
+	NOTE_A7, 0, NOTE_F7, NOTE_G7,
+	0, NOTE_E7, 0, NOTE_C7,
+	NOTE_D7, NOTE_B6, 0, 0,
+
+	NOTE_C7, 0, 0, NOTE_G6,
+	0, 0, NOTE_E6, 0,
+	0, NOTE_A6, 0, NOTE_B6,
+	0, NOTE_AS6, NOTE_A6, 0,
+
+	NOTE_G6, NOTE_E7, NOTE_G7,
+	NOTE_A7, 0, NOTE_F7, NOTE_G7,
+	0, NOTE_E7, 0, NOTE_C7,
+	NOTE_D7, NOTE_B6, 0, 0
+};
+//Mario main them tempo
+unsigned char tempo[78] = {
+	12, 12, 12, 12,
+	12, 12, 12, 12,
+	12, 12, 12, 12,
+	12, 12, 12, 12,
+
+	12, 12, 12, 12,
+	12, 12, 12, 12,
+	12, 12, 12, 12,
+	12, 12, 12, 12,
+
+	9, 9, 9,
+	12, 12, 12, 12,
+	12, 12, 12, 12,
+	12, 12, 12, 12,
+
+	12, 12, 12, 12,
+	12, 12, 12, 12,
+	12, 12, 12, 12,
+	12, 12, 12, 12,
+
+	9, 9, 9,
+	12, 12, 12, 12,
+	12, 12, 12, 12,
+	12, 12, 12, 12,
+};
+
+const unsigned char MAXINDEXBOMB = 16;
+
+double melodyBomb[16] = {
+	NOTE_B3, NOTE_B3, NOTE_B4, NOTE_B3,
+	NOTE_D4, 0, NOTE_FS4, NOTE_GS4,
+	NOTE_A4, 0, NOTE_A4,  0,
+	NOTE_GS4, 0, 0, 0
+};
+//Mario main them tempo
+unsigned char tempoBomb[16] = {
+	12, 12, 12, 12,
+	12, 12, 12, 12,
+	12, 12, 12, 12,
+	24, 12, 12, 12
+};
+
+unsigned short countSound = 0;
+const unsigned short PERIODSOUND = 200;
+unsigned char noteIndex;
+double freqOut = 0.00;
+
+enum SoundState{SoundStart, SoundInit,SoundMenu, SoundRunning, SoundGameOver,SoundNextLevel, SoundWin};
+
+unsigned char TickSound(unsigned char state) {
+	switch(state) {
+		case SoundStart:
+		state = SoundInit;
+		break;
+		
+		case SoundInit:
+		state = SoundMenu;
+		break;
+		
+		case SoundMenu:
+		if(currentGameState == GLogicPlaying) {
+			soundQueueSize = 0;
+			soundQueueStart = 0;
+			soundQueueEnd = 0;
+			soundQueueCount = 0;
+			state = SoundRunning;
+		}
+		break;
+		
+		case SoundRunning:
+		if(currentGameState == GLogicMenu) {
+			state = SoundMenu;
+		}
+		else if(currentGameState == GLogicGameOver) {
+			state = SoundGameOver;
+		}
+		else if(currentGameState == GLogicLevelComplete) {
+			state = SoundNextLevel;
+			noteIndex = 0;
+			freqOut = 0;
+			countSound = 0;
+		}
+		else if(currentGameState == GLogicWin) {
+			state = SoundWin;
+			noteIndex = 0;
+			freqOut = 0;
+			countSound = 0;
+		}
+		break;
+		
+		case SoundWin:
+		if(currentGameState == GLogicMenu) {
+			state = SoundMenu;
+		}
+		break;
+		
+		case SoundNextLevel:
+		if(currentGameState == GLogicPlaying){
+			soundQueueSize = 0;
+			soundQueueStart = 0;
+			soundQueueEnd = 0;
+			soundQueueCount = 0;
+			state = SoundRunning;
+		}
+		break;
+		
+		case SoundGameOver:
+		if(currentGameState == GLogicMenu) {
+			state = SoundMenu;
+		}
+		break;
+		
+		default:
+		state = SoundStart;
+		break;
+	}
+	switch(state) {
+		case SoundInit:
+		
+		set_PWM(0);
+		break;
+		
+		case SoundMenu:
+		freqOut = 0;
+		break;
+		
+		case SoundGameOver:
+		freqOut = 0;
+		break;
+		
+		case SoundWin:
+		if(noteIndex < MAXINDEX - 1) {
+			if(tempo[noteIndex] >= countSound) {
+				if(noteIndex < MAXINDEX - 1) {
+					noteIndex++;
+					countSound = 0;
+				}
+			}
+			freqOut = melody[noteIndex];
+			countSound++;
+		}
+		break;
+		
+		case SoundRunning:
+		if(soundQueueSize != 0) {
+			if(soundDuration > soundQueueCount) {
+				freqOut = soundQueue[soundQueueStart];
+				soundQueueCount++;
+			}
+			else {
+				if(soundQueueStart >= 2) {
+					soundQueueStart = 0;
+				}
+				else {
+					soundQueueStart = soundQueueStart + 1;
+				}
+				soundQueueSize = soundQueueSize - 1;
+				soundQueueCount = 0;
+			}
+		}
+		else {
+			freqOut = 0;
+		}
+		break;
+		
+		case SoundNextLevel:
+		if(noteIndex < MAXINDEXBOMB - 1) {
+			if(tempoBomb[noteIndex] >= countSound) {
+				if(noteIndex < MAXINDEXBOMB - 1) {
+					noteIndex++;
+					countSound = 0;
+				}
+			}
+			freqOut = melodyBomb[noteIndex];
+			countSound++;
+		}
+		break;
+		
+		default:
+		break;
+	}
+	set_PWM(freqOut);
+	return state;
+}
 
 // --------END User defined FSMs-----------------------------------------------
 
@@ -1124,7 +1487,7 @@ int main(){
 	// Set Data Direction Registers
 	// Buttons PORTA[0-7], set AVR PORTA to pull down logic
 	DDRA = 0x03; PORTA = 0xFC;
-	
+	DDRC = 0xFF; PORTC = 0x00;
 	DDRB = 0xFF; PORTB = 0x00;
 	DDRD = 0xFF; PORTD = 0x00;
 	
@@ -1132,6 +1495,7 @@ int main(){
 	nokia_lcd_clear();
 	nokia_lcd_render();
 	SNES_init();
+	PWM_on();
 	// Period for the tasks
 	//unsigned long int SMTickSNES_calc = 1;
 	unsigned long int SMTickLCD_calc = 10;
@@ -1139,12 +1503,14 @@ int main(){
 	unsigned long int SMTickSNES_calc = 10;
 	unsigned long int SMTickPWMMotor_calc = 10;
 	unsigned long int SMTickPWMMotorManager_calc = 10;
+	unsigned long int SMTickSound_calc = 10;
 	//Calculating GCD
 	unsigned long int tmpGCD = 1;
 	tmpGCD = findGCD(SMTickLogic_calc, SMTickLCD_calc);
 	tmpGCD = findGCD(SMTickSNES_calc, tmpGCD);
 	tmpGCD = findGCD(SMTickPWMMotor_calc, tmpGCD);
 	tmpGCD = findGCD(SMTickPWMMotorManager_calc, tmpGCD);
+	tmpGCD = findGCD(SMTickSound_calc, tmpGCD);
 	
 	//Greatest common divisor for all tasks or smallest time unit for tasks.
 	unsigned long int GCD = tmpGCD;
@@ -1156,10 +1522,11 @@ int main(){
 	unsigned long int SMTickSNES_period = SMTickSNES_calc/GCD;
 	unsigned long int SMTickPWMMotor_period = SMTickPWMMotor_calc/GCD;
 	unsigned long int SMTickPWMMotorManager_period = SMTickPWMMotorManager_calc/GCD;
+	unsigned long int SMTickSound_period = SMTickSound_calc/GCD;
 	
 	//Declare an array of tasks 
-	static task task1, task2, task3, task4, task5;
-	task *tasks[] = {&task1, &task2, &task3, &task4, &task5};
+	static task task1, task2, task3, task4, task5, task6;
+	task *tasks[] = {&task1, &task2, &task3, &task4, &task5, &task6};
 	const unsigned short numTasks = sizeof(tasks)/sizeof(task*);
 
 	// Task 1
@@ -1187,6 +1554,11 @@ int main(){
 	task5.period = SMTickPWMMotorManager_calc;
 	task5.elapsedTime = SMTickPWMMotorManager_period;
 	task5.TickFct = &TickPWMMotorManager;
+	
+	task6.state = -1;
+	task6.period = SMTickSound_calc;
+	task6.elapsedTime = SMTickSound_period;
+	task6.TickFct = &TickSound;
 	
 	// Set the timer and turn it on
 	TimerSet(GCD);
