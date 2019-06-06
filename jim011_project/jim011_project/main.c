@@ -343,12 +343,14 @@ char vibrateQueueSize = 0;
 char vibrateQueueStart = 0;
 char vibrateQueueEnd = 0;
 const char VIB_QUEUE_MAX = 3;
-unsigned short vibrateDuration = 0;
+unsigned short vibrateDuration;
+unsigned short vibrateQueueCount;
 unsigned short PWMCount = 0;
-unsigned short PWMOnPeriod = 2;
-unsigned short PWMOffPeriod = 8;
+const unsigned short PWMOnPERIOD = 5;
 
-char rumbleMes = 0;
+
+unsigned char rumbleMes = 0;
+unsigned char rumbleOn = 0;
 enum PWMMotorState {PWMMotorStart, PWMMotorInit, PWMMotorWait, PWMMotorGetQueueData, PWMMotorOn, PWMMotorOff};
 
 unsigned char TickPWMMotor(unsigned char state) {
@@ -363,7 +365,7 @@ unsigned char TickPWMMotor(unsigned char state) {
 		break;
 		
 		case PWMMotorOn:
-		if(PWMCount >= 5) {
+		if(PWMCount >= PWMOnPERIOD) {
 			state = PWMMotorOff;
 			PWMCount = 0;
 		}
@@ -385,7 +387,7 @@ unsigned char TickPWMMotor(unsigned char state) {
 			break;
 			
 			case PWMMotorOn:
-			if((SNESOutput & 0x4000) == 0x4000) {
+			if(rumbleOn) {
 				PORTB = 0xFFFF;
 				rumbleMes = 1;
 			}
@@ -397,7 +399,7 @@ unsigned char TickPWMMotor(unsigned char state) {
 			break;
 			
 			case PWMMotorOff:
-			if((SNESOutput & 0x4000) == 0x4000) {
+			if(rumbleOn) {
 				PORTB = 0x0000;
 				rumbleMes = 1;
 			}
@@ -415,6 +417,81 @@ unsigned char TickPWMMotor(unsigned char state) {
 }
 
 
+enum PWMMotorManagerState {PWMMotorManagerStart, PWMMotorManagerInit, PWMMotorManagerWait, PWMMotorManagerGetQueueData, PWMMotorManagerCount, PWMMotorManagerFinish};
+unsigned char TickPWMMotorManager(unsigned char state) {
+	switch(state) {
+		case PWMMotorManagerStart:
+		state = PWMMotorManagerInit;
+		break;
+		
+		case PWMMotorManagerInit:
+		state = PWMMotorManagerWait;
+		break;
+		
+		case PWMMotorManagerWait:
+		if(vibrateQueueSize > 0) {
+			state = PWMMotorGetQueueData;
+		}
+		break;
+		
+		case PWMMotorManagerGetQueueData:
+		state = PWMMotorManagerCount;
+		break;
+		
+		case PWMMotorManagerCount:
+		if(vibrateDuration <= vibrateQueueCount) {
+			state = PWMMotorManagerFinish;
+		}
+		break;
+		
+		case PWMMotorManagerFinish:
+		state = PWMMotorManagerWait;
+		break;
+		
+		default:
+		state = PWMMotorManagerStart;
+		break;
+	}
+	switch(state) {
+		case PWMMotorManagerInit:
+		vibrateQueueSize = 0;
+		vibrateQueueStart = 0;
+		vibrateQueueEnd = 0;
+		vibrateDuration = 0;
+		break;
+		
+		case PWMMotorManagerWait:
+		rumbleOn = 0;
+		break;
+		
+		case PWMMotorManagerGetQueueData:
+		vibrateDuration = vibrateQueue[vibrateQueueStart];
+		vibrateQueueCount = 0;
+		break;
+		
+		case PWMMotorManagerCount:
+		rumbleOn = 1;
+		vibrateQueueCount = vibrateQueueCount + 1;
+		break;
+		
+		case PWMMotorManagerFinish:
+		rumbleOn = 0;
+		if(vibrateQueueStart >= 2) {
+			vibrateQueueStart = 0;
+		}
+		else {
+			vibrateQueueStart = vibrateQueueStart + 1;
+		}
+		vibrateQueueSize = vibrateQueueSize - 1;
+		vibrateQueueCount = 0;
+		break;
+		
+		default:
+		break;
+	}
+	return state;
+}
+
 struct explodeNode {
 	unsigned char posX;
 	unsigned char posY;
@@ -426,6 +503,8 @@ unsigned char explodeStackSize;
 unsigned short highScore;
 uint16_t* EEPROM_ADDRESS_0 = 0x0000;
 
+unsigned short menuInputDelay = 10;
+unsigned short menuInputDelayCount = 0;
 
 unsigned short tempScore;
 unsigned char displayScore[3];
@@ -439,6 +518,7 @@ unsigned char displayGameTimer[3];
 unsigned char gameOver;
 unsigned char levelFinish;
 unsigned char levelCount;
+const unsigned char LEVELMAX = 3;
 
 enum GameLogicStates{GLogicStart, GLogicInit, GLogicMenu, GLogicLevelInit, GLogicPlaying, GLogicGameOver, GLogicLevelComplete, GLogicNextLevel, GLogicRestartLevel, GLogicWin};
 	
@@ -454,7 +534,7 @@ unsigned char TickGameLogic(unsigned char state) {
 		break;
 		
 		case GLogicMenu:
-		if((SNESOutput & 0x1000) == 0x1000){
+		if(((SNESOutput & 0x1000) == 0x1000) && menuInputDelayCount >= menuInputDelay){
 			state = GLogicLevelInit;
 		}
 		break;
@@ -464,22 +544,31 @@ unsigned char TickGameLogic(unsigned char state) {
 		break;
 		
 		case GLogicPlaying:
-		if(levelFinish != 0) {
-			state = GLogicNextLevel;
+		if(levelFinish != 0 && levelCount < LEVELMAX) {
+			state = GLogicLevelComplete;
+		}
+		else if(levelFinish != 0 && levelCount >= LEVELMAX) {
+			state = GLogicWin;
 		}
 		else if(gameOver != 0) {
 			state = GLogicGameOver;
 		}
 		break;
 		
+		case GLogicNextLevel:
+		state = GLogicPlaying;
+		break;
+		
 		case GLogicLevelComplete:
 		if((SNESOutput & 0x1000) == 0x1000){
-			state = GLogicPlaying;
+			state = GLogicNextLevel;
 		}
 		break;
 		
-		case GLogicNextLevel:
-		state= GLogicPlaying;
+		case GLogicWin:
+		if((SNESOutput & 0x1000) == 0x1000){
+			state = GLogicMenu;
+		}
 		break;
 		
 		case GLogicRestartLevel:
@@ -502,6 +591,7 @@ unsigned char TickGameLogic(unsigned char state) {
 			case GLogicInit:
 			//SNES_init();
 			highScore = 0;
+			menuInputDelayCount = 0;
 			break;
 			
 			case GLogicMenu:
@@ -521,6 +611,11 @@ unsigned char TickGameLogic(unsigned char state) {
 				//Clear Score = "SELECT"
 				eeprom_write_word(EEPROM_ADDRESS_0, 0x0000);
 			}
+			
+			if(menuInputDelayCount < menuInputDelay) {
+				menuInputDelayCount = menuInputDelayCount + 1;
+			}
+			
 			break;
 			
 			case GLogicLevelInit:
@@ -545,6 +640,10 @@ unsigned char TickGameLogic(unsigned char state) {
 			transferObjToDis();
 			break;
 			
+			case GLogicLevelComplete:
+			currentGameState = GLogicLevelComplete;
+			break;
+			
 			case GLogicNextLevel:
 			levelCount = levelCount + 1;
 			
@@ -560,12 +659,23 @@ unsigned char TickGameLogic(unsigned char state) {
 			player1.isBombPlaced = 0;
 			tempScore = tempScore + gameTimer;
 			
-			currentGameState = GLogicNextLevel;
+			currentGameState = GLogicPlaying;
 			levelFinish = 0;
 			gameOver = 0;
 			gameTimer = ROUNDPERIOD;
 			gameTimerCountSecond = 0;
 			transferObjToDis();
+			break;
+			
+			case GLogicWin:
+			currentGameState = GLogicWin;
+			displayScore[2] = (tempScore % 10) + '0';
+			displayScore[1] = ((tempScore / 10) % 10) + '0';
+			displayScore[0] = ((tempScore / 100) % 10) + '0';
+			if(highScore < tempScore) {
+				highScore = tempScore;
+			}
+			menuInputDelayCount = 0;
 			break;
 			
 			case GLogicPlaying:
@@ -651,13 +761,13 @@ unsigned char TickGameLogic(unsigned char state) {
 			else if(player1.bombCount >= BOMBPERIOD && player1.isBombPlaced != 0) {
 				tempObj = objectLocMatrix[player1.bombPosY][(player1.bombPosX)];
 				vibrateQueue[vibrateQueueEnd] = 10;
-				if(vibrateQueueEnd >= vibrateQueueSize - 1) {
+				if(vibrateQueueEnd >= 2) {
 					vibrateQueueEnd = 0;
 				}
 				else {
-					vibrateQueueEnd++;
+					vibrateQueueEnd = vibrateQueueEnd + 1;
 				}
-				vibrateQueueSize++;
+				vibrateQueueSize = vibrateQueueSize + 1;
 				
 				if(tempObj == OBJPlayer){
 					gameOver = 1;
@@ -782,6 +892,7 @@ unsigned char TickGameLogic(unsigned char state) {
 			if(highScore < tempScore) {
 				highScore = tempScore;
 			}
+			menuInputDelayCount = 0;
 			break;
 			
 			default:
@@ -866,33 +977,50 @@ const char LEVELMESSAGE3[] = "Press Start";
 void levelBeatDisplay() {
 	nokia_lcd_set_cursor(0,10);
 	nokia_lcd_write_string(LEVELMESSAGE1,2);
-	nokia_lcd_set_cursor(48,10);
-	nokia_lcd_write_char(levelCount, 2);
-	nokia_lcd_set_cursor(0,20);
+	nokia_lcd_set_cursor(70,10);
+	nokia_lcd_write_char('0'+levelCount, 2);
+	nokia_lcd_set_cursor(0,30);
 	nokia_lcd_write_string(LEVELMESSAGE2,1);
 	nokia_lcd_set_cursor(0,40);
 	nokia_lcd_write_string(LEVELMESSAGE3,1);
 }
 
-const char GAMEOVERMESSAGE1[] = "Game Over";
-const char GAMEOVERMESSAGE2[] = "Score: ";
+const char GAMEOVERMESSAGE1[] = "GAMEOVER";
+const char GAMEOVERMESSAGE2[] = "Score:";
 const char GAMEOVERMESSAGE3[] = "Press Start";
 void gameOverDisplay() {
-	nokia_lcd_set_cursor(0,10);
+	nokia_lcd_set_cursor(0,0);
 	nokia_lcd_write_string(GAMEOVERMESSAGE1,2);
-	nokia_lcd_set_cursor(0,20);
+	nokia_lcd_set_cursor(0,0);
+	nokia_lcd_write_char('G', 2);
+	nokia_lcd_set_cursor(0,30);
 	nokia_lcd_write_string(GAMEOVERMESSAGE2,1);
-	nokia_lcd_set_cursor(10,20);
+	nokia_lcd_set_cursor(40,30);
 	nokia_lcd_write_char(displayScore[0], 1);
-	nokia_lcd_set_cursor(15,20);
+	nokia_lcd_set_cursor(45,30);
 	nokia_lcd_write_char(displayScore[1], 1);
-	nokia_lcd_set_cursor(20,20);
+	nokia_lcd_set_cursor(50,30);
 	nokia_lcd_write_char(displayScore[2], 1);
 	nokia_lcd_set_cursor(0,40);
 	nokia_lcd_write_string(GAMEOVERMESSAGE3,1);
 }
 
-enum LCDDisplayState{LCDDisplayStart, LCDDisplayInit,LCDDisplayMenu, LCDDisplayRunning, LCDDisplayGameOver};
+const char WINMESSAGE1[] = "YOU WIN";
+void winDisplay() {
+	nokia_lcd_set_cursor(0,0);
+	nokia_lcd_write_string(WINMESSAGE1,2);
+	nokia_lcd_set_cursor(0,30);
+	nokia_lcd_write_string(GAMEOVERMESSAGE2,1);
+	nokia_lcd_set_cursor(40,30);
+	nokia_lcd_write_char(displayScore[0], 1);
+	nokia_lcd_set_cursor(45,30);
+	nokia_lcd_write_char(displayScore[1], 1);
+	nokia_lcd_set_cursor(50,30);
+	nokia_lcd_write_char(displayScore[2], 1);
+	nokia_lcd_set_cursor(0,40);
+	nokia_lcd_write_string(GAMEOVERMESSAGE3,1);
+}
+enum LCDDisplayState{LCDDisplayStart, LCDDisplayInit,LCDDisplayMenu, LCDDisplayRunning, LCDDisplayGameOver,LCDDisplayNextLevel, LCDDisplayWin};
 	
 unsigned char TickLCDDisplay (unsigned char state) {
 	switch(state) {
@@ -917,6 +1045,24 @@ unsigned char TickLCDDisplay (unsigned char state) {
 		else if(currentGameState == GLogicGameOver) {
 			state = LCDDisplayGameOver;
 		}
+		else if(currentGameState == GLogicLevelComplete) {
+			state = LCDDisplayNextLevel;
+		}
+		else if(currentGameState == GLogicWin) {
+			state = LCDDisplayWin;
+		}
+		break;
+		
+		case LCDDisplayWin:
+		if(currentGameState == GLogicMenu) {
+			state = LCDDisplayMenu;
+		}
+		break;
+		
+		case LCDDisplayNextLevel:
+		if(currentGameState == GLogicPlaying){
+			state = LCDDisplayRunning;
+		}
 		break;
 		
 		case LCDDisplayGameOver:
@@ -939,9 +1085,27 @@ unsigned char TickLCDDisplay (unsigned char state) {
 		nokia_lcd_render();
 		break;
 		
+		case LCDDisplayGameOver:
+		nokia_lcd_clear();
+		gameOverDisplay();
+		nokia_lcd_render();
+		break;
+		
+		case LCDDisplayWin:
+		nokia_lcd_clear();
+		winDisplay();
+		nokia_lcd_render();
+		break;
+		
 		case LCDDisplayRunning:
 		nokia_lcd_clear();
 		matrixToDisplay();
+		nokia_lcd_render();
+		break;
+		
+		case LCDDisplayNextLevel:
+		nokia_lcd_clear();
+		levelBeatDisplay();
 		nokia_lcd_render();
 		break;
 		
@@ -973,12 +1137,15 @@ int main(){
 	unsigned long int SMTickLCD_calc = 10;
 	unsigned long int SMTickLogic_calc = 10;
 	unsigned long int SMTickSNES_calc = 10;
-	unsigned long int SMTickPWMMotor_calc = 100;
+	unsigned long int SMTickPWMMotor_calc = 10;
+	unsigned long int SMTickPWMMotorManager_calc = 10;
 	//Calculating GCD
 	unsigned long int tmpGCD = 1;
 	tmpGCD = findGCD(SMTickLogic_calc, SMTickLCD_calc);
 	tmpGCD = findGCD(SMTickSNES_calc, tmpGCD);
 	tmpGCD = findGCD(SMTickPWMMotor_calc, tmpGCD);
+	tmpGCD = findGCD(SMTickPWMMotorManager_calc, tmpGCD);
+	
 	//Greatest common divisor for all tasks or smallest time unit for tasks.
 	unsigned long int GCD = tmpGCD;
 
@@ -988,10 +1155,11 @@ int main(){
 	unsigned long int SMTickLogic_period = SMTickLogic_calc/GCD;
 	unsigned long int SMTickSNES_period = SMTickSNES_calc/GCD;
 	unsigned long int SMTickPWMMotor_period = SMTickPWMMotor_calc/GCD;
+	unsigned long int SMTickPWMMotorManager_period = SMTickPWMMotorManager_calc/GCD;
 	
 	//Declare an array of tasks 
-	static task task1, task2, task3, task4;
-	task *tasks[] = {&task1, &task2, &task3, &task4};
+	static task task1, task2, task3, task4, task5;
+	task *tasks[] = {&task1, &task2, &task3, &task4, &task5};
 	const unsigned short numTasks = sizeof(tasks)/sizeof(task*);
 
 	// Task 1
@@ -1014,6 +1182,11 @@ int main(){
 	task4.period = SMTickPWMMotor_calc;
 	task4.elapsedTime = SMTickPWMMotor_period;
 	task4.TickFct = &TickPWMMotor;
+	
+	task5.state = -1;
+	task5.period = SMTickPWMMotorManager_calc;
+	task5.elapsedTime = SMTickPWMMotorManager_period;
+	task5.TickFct = &TickPWMMotorManager;
 	
 	// Set the timer and turn it on
 	TimerSet(GCD);
