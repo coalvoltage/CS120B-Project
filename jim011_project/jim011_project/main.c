@@ -308,13 +308,13 @@ unsigned char levelDatabase[3][3][7]= {
 					{OBJEmpty, OBJBlock, OBJEmpty, OBJBlock, OBJEmpty, OBJBlock, OBJWall},
 					{OBJHidden, OBJEmpty, OBJEmpty, OBJEmpty, OBJEmpty, OBJEmpty, OBJEmpty}},
 						
-					{{OBJPlayer, OBJEmpty, OBJEmpty, OBJEmpty, OBJEmpty, OBJEmpty, OBJEmpty},
-					{OBJEmpty, OBJBlock, OBJEmpty, OBJBlock, OBJEmpty, OBJBlock, OBJEmpty},
-					{OBJEmpty, OBJEmpty, OBJEmpty, OBJHidden, OBJEmpty, OBJEmpty, OBJEmpty}},
+					{{OBJPlayer, OBJEmpty, OBJEmpty, OBJEmpty, OBJWall, OBJEmpty, OBJEmpty},
+					{OBJEmpty, OBJBlock, OBJEmpty, OBJBlock, OBJEmpty, OBJBlock, OBJWall},
+					{OBJEmpty, OBJWall, OBJEmpty, OBJHidden, OBJEmpty, OBJEmpty, OBJEmpty}},
 	
-					{{OBJPlayer, OBJEmpty, OBJEmpty, OBJEmpty, OBJEmpty, OBJEmpty, OBJEmpty},
+					{{OBJPlayer, OBJEmpty, OBJWall, OBJWall, OBJEmpty, OBJEmpty, OBJEmpty},
 					{OBJEmpty, OBJBlock, OBJEmpty, OBJBlock, OBJEmpty, OBJBlock, OBJEmpty},
-					{OBJEmpty, OBJEmpty, OBJEmpty, OBJEmpty, OBJEmpty, OBJEmpty, OBJHidden}}
+					{OBJEmpty, OBJEmpty, OBJEmpty, OBJEnemy, OBJEmpty, OBJEmpty, OBJHidden}}
 					};
 unsigned char displayMatrix[48][84];
 
@@ -626,6 +626,8 @@ const char SOUND_QUEUE_MAX = 3;
 const unsigned short soundDuration = 3;
 unsigned short soundQueueCount;
 
+
+
 enum GameLogicStates{GLogicStart, GLogicInit, GLogicMenu, GLogicLevelInit, GLogicPlaying, GLogicGameOver, GLogicLevelComplete, GLogicNextLevel, GLogicRestartLevel, GLogicWin};
 	
 unsigned char currentGameState = GLogicMenu;
@@ -737,6 +739,7 @@ unsigned char TickGameLogic(unsigned char state) {
 			player1.playerPosY = 0;
 			player1.isBombPlaced = 0;
 			
+			
 			currentGameState = GLogicPlaying;
 			levelFinish = 0;
 			levelCount = 1;
@@ -760,6 +763,7 @@ unsigned char TickGameLogic(unsigned char state) {
 					objectLocMatrix[tempY][tempX] = levelDatabase[levelCount - 1][tempY][tempX];
 				}
 			}
+			
 			
 			//Reset Game values
 			player1.playerPosX = 0;
@@ -830,6 +834,9 @@ unsigned char TickGameLogic(unsigned char state) {
 					objectLocMatrix[player1.playerPosY][player1.playerPosX] = OBJPlayer;
 					levelFinish = 1;
 				}
+				else if(tempObj == OBJEnemy) {
+					gameOver = 1;
+				}
 			}
 			else if(player1.playerPosX != 0 && (SNESOutput & 0x0200) == 0x0200) {
 				tempObj = objectLocMatrix[player1.playerPosY][(player1.playerPosX - 1)];
@@ -843,6 +850,9 @@ unsigned char TickGameLogic(unsigned char state) {
 					player1.playerPosX = player1.playerPosX - 1;
 					objectLocMatrix[player1.playerPosY][player1.playerPosX] = OBJPlayer;
 					levelFinish = 1;
+				}
+				else if(tempObj == OBJEnemy) {
+					gameOver = 1;
 				}
 			}
 			else if(player1.playerPosY != 0 && (SNESOutput & 0x0800) == 0x0800) {
@@ -858,6 +868,9 @@ unsigned char TickGameLogic(unsigned char state) {
 					objectLocMatrix[player1.playerPosY][player1.playerPosX] = OBJPlayer;
 					levelFinish = 1;
 				}
+				else if(tempObj == OBJEnemy) {
+					gameOver = 1;
+				}
 			}
 			else if(player1.playerPosY != 2 && (SNESOutput & 0x0400) == 0x0400) {
 				tempObj = objectLocMatrix[player1.playerPosY + 1][(player1.playerPosX)];
@@ -872,11 +885,13 @@ unsigned char TickGameLogic(unsigned char state) {
 					objectLocMatrix[player1.playerPosY][player1.playerPosX] = OBJPlayer;
 					levelFinish = 1;
 				}
+				else if(tempObj == OBJEnemy) {
+					gameOver = 1;
+				}
 			}
 			if((player1.playerPosX != player1.bombPosX || player1.playerPosY != player1.bombPosY) && player1.isBombPlaced != 0) {
 				objectLocMatrix[player1.bombPosY][player1.bombPosX] = OBJBomb;
 			}
-			//Enemy Ai
 			
 			//Check Bomb And Explosion Objs
 			while(explodeStackSize != 0) {
@@ -921,7 +936,7 @@ unsigned char TickGameLogic(unsigned char state) {
 				
 				if(player1.bombPosX != 6) {
 					tempObj = objectLocMatrix[player1.bombPosY][(player1.bombPosX + 1)];
-					if(tempObj == OBJEmpty || tempObj == OBJWall){
+					if(tempObj == OBJEmpty || tempObj == OBJWall || tempObj == OBJEnemy){
 						struct explodeNode tempExplo;
 						tempExplo.posX = player1.bombPosX + 1;
 						tempExplo.posY = player1.bombPosY;
@@ -942,7 +957,7 @@ unsigned char TickGameLogic(unsigned char state) {
 				}
 				if(player1.bombPosX != 0) {
 					tempObj = objectLocMatrix[player1.bombPosY][(player1.bombPosX - 1)];
-					if(tempObj == OBJEmpty || tempObj == OBJWall){
+					if(tempObj == OBJEmpty || tempObj == OBJWall || tempObj == OBJEnemy){
 						struct explodeNode tempExplo;
 						tempExplo.posX = player1.bombPosX - 1;
 						tempExplo.posY = player1.bombPosY;
@@ -963,7 +978,7 @@ unsigned char TickGameLogic(unsigned char state) {
 				}
 				if(player1.bombPosY != 0) {
 					tempObj = objectLocMatrix[player1.bombPosY - 1][(player1.bombPosX)];
-					if(tempObj == OBJEmpty || tempObj == OBJWall){
+					if(tempObj == OBJEmpty || tempObj == OBJWall || tempObj == OBJEnemy){
 						struct explodeNode tempExplo;
 						tempExplo.posX = player1.bombPosX;
 						tempExplo.posY = player1.bombPosY - 1;
@@ -984,7 +999,7 @@ unsigned char TickGameLogic(unsigned char state) {
 				}
 				if(player1.bombPosY != 2) {
 					tempObj = objectLocMatrix[player1.bombPosY + 1][(player1.bombPosX)];
-					if(tempObj == OBJEmpty || tempObj == OBJWall){
+					if(tempObj == OBJEmpty || tempObj == OBJWall || tempObj == OBJEnemy){
 						struct explodeNode tempExplo;
 						tempExplo.posX = player1.bombPosX;
 						tempExplo.posY = player1.bombPosY + 1;
@@ -1264,6 +1279,7 @@ unsigned char TickLCDDisplay (unsigned char state) {
 	return state;
 }
 
+//https://www.hackster.io/techarea98/super-mario-theme-song-with-piezo-buzzer-and-arduino-2cc461
 const unsigned char MAXINDEX = 78;
 //Mario main theme melody
 double melody[78] = {
@@ -1320,6 +1336,7 @@ unsigned char tempo[78] = {
 	12, 12, 12, 12,
 };
 
+//https://www.ninsheetmusic.org/browse/series/Bomberman
 const unsigned char MAXINDEXBOMB = 16;
 
 double melodyBomb[16] = {
@@ -1440,7 +1457,7 @@ unsigned char TickSound(unsigned char state) {
 		case SoundRunning:
 		if(soundQueueSize != 0) {
 			if(soundDuration > soundQueueCount) {
-				freqOut = soundQueue[soundQueueStart];
+				freqOut = soundQueue[soundQueueStart] + soundQueueCount;
 				soundQueueCount++;
 			}
 			else {
