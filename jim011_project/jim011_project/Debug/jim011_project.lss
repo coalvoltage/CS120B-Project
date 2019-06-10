@@ -5636,7 +5636,7 @@ unsigned long int findGCD(unsigned long int a, unsigned long int b)
     25fe:	d1 01       	movw	r26, r2
     2600:	dc 92       	st	X, r13
 	task3.period = SMTickLogic_calc;//Task Period.
-    2602:	6e e1       	ldi	r22, 0x1E	; 30
+    2602:	68 e2       	ldi	r22, 0x28	; 40
     2604:	70 e0       	ldi	r23, 0x00	; 0
     2606:	80 e0       	ldi	r24, 0x00	; 0
     2608:	90 e0       	ldi	r25, 0x00	; 0

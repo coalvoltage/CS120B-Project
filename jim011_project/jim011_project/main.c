@@ -1,7 +1,6 @@
 /*Jimmy Im : jim011@ucr.edu
- *James Luo : jluo011@ucr.edu
  *Lab Section: 024
- *Assignment: Lab 11 Exercise 4
+ *Assignment: Final Project
  *
  *I acknowledge all content contained herein, excluding template or example
  *code, is my own original work.
@@ -13,7 +12,6 @@
 #include <bit.h>
 #include <timer.h>
 #include <stdio.h>
-#include <io.c>
 #include <util/delay.h>
 #include <avr/eeprom.h>
 #include "nokia5110.h"
@@ -1615,7 +1613,7 @@ int main(){
 	// Period for the tasks
 	//unsigned long int SMTickSNES_calc = 1;
 	unsigned long int SMTickLCD_calc = 10;
-	unsigned long int SMTickLogic_calc = 30;
+	unsigned long int SMTickLogic_calc = 40;
 	unsigned long int SMTickSNES_calc = 1;
 	unsigned long int SMTickPWMMotor_calc = 10;
 	unsigned long int SMTickPWMMotorManager_calc = 10;
