@@ -12,12 +12,10 @@
 #include <avr/interrupt.h>
 #include <bit.h>
 #include <timer.h>
-#include <keypad.h>
 #include <stdio.h>
 #include <io.c>
 #include <util/delay.h>
 #include <avr/eeprom.h>
-#include "SNES.c"
 #include "nokia5110.h"
 
 #define NOTE_B0  31.0
@@ -180,31 +178,123 @@ typedef struct _task {
     int (*TickFct)(int); //Task tick function
 } task;
 
+enum SNESStates {SNESStart, SNESInit, SNESWait, SNESLatch, SNESLatchAfter, SNESData, SNESClock, SNESFinish};
+const unsigned short SNESDELAYWAIT = 6;
+const unsigned short SNESDELAYCLK = 16;
+
+unsigned short countSNESControl;
 unsigned short dataSNESControl;
-enum SNESStates {SNESStart, SNESRead};
 unsigned char TickSNESControl(unsigned char state) {
-	switch(state) {
+	
+	unsigned char SNESPins;
+	unsigned char S2;
+	unsigned char S3;
+	unsigned short S4;
+	//LEDSpecial = 0x00;
+	SNESPins = (~PINA);
+	S4 = (SNESPins & 0x0004) >> 2;
+	//Transition
+	switch (state) {
 		case SNESStart:
-		state = SNESRead;
+		state = SNESInit;
 		break;
 		
-		case SNESRead:
+		case SNESInit:
+		state = SNESWait;
+		break;
+		
+		case SNESWait:
+		if(countSNESControl >= SNESDELAYWAIT) {
+			state = SNESLatch;
+		}
+		//LEDSpecial = 0xF0;
+		break;
+		
+		case SNESLatch:
+		state = SNESLatchAfter;
+		break;
+		
+		case SNESLatchAfter:
+		state = SNESData;
+		break;
+		
+		case SNESData:
+		state = SNESClock;
+		break;
+		
+		case SNESClock:
+		if(countSNESControl >= SNESDELAYCLK) {
+			state = SNESFinish;
+		}
+		else {
+			state = SNESData;
+		}
+		break;
+		
+		case SNESFinish:
+		state = SNESWait;
 		break;
 		
 		default:
 		state = SNESStart;
 		break;
 	}
-	switch(state) {
-			case SNESRead:
-			SNESOutput = SNES_Read();
-			break;
-			
-			default:
-			break;
+	//Action
+	switch (state) {
+		case SNESInit:
+		countSNESControl = 0;
+		SNESOutput = 0;
+		dataSNESControl = 0;
+		break;
+		
+		case SNESWait:
+		countSNESControl++;
+		dataSNESControl = 0x0000;
+		S3 = 0;
+		S2 = 0;
+		break;
+		
+		case SNESLatch:
+		S3 = 1;
+		S2 = 0;
+		countSNESControl = 0;
+		break;
+		
+		case SNESLatchAfter:
+		S3 = 0;
+		S2 = 0;
+		break;
+		
+		case SNESData:
+		S2 = 0;
+		S3 = 0;
+		dataSNESControl = dataSNESControl | S4;
+		break;
+		
+		case SNESClock:
+		countSNESControl++;
+		S2 = 1;
+		S3 = 0;
+		if(countSNESControl < SNESDELAYCLK) {
+			dataSNESControl = dataSNESControl<<1;
+		}
+		break;
+		
+		case SNESFinish:
+		countSNESControl = 0;
+		SNESOutput = dataSNESControl;
+		break;
+		
+		default:
+		break;
 	}
+	S3 = S3 << 1;
+	S4 = S4 << 2;
+	SNESPins = 0x00 | S2 | S3 | S4;
+	PORTA = SNESPins;
 	return state;
 }
+
 
 enum LEDOutputStates {LEDStart, LEDDisplay};
 	
@@ -626,7 +716,222 @@ const char SOUND_QUEUE_MAX = 3;
 const unsigned short soundDuration = 3;
 unsigned short soundQueueCount;
 
+void gamePlayingPlayerActions(){
+	
+	//Player Input and Actions
+	if(player1.isBombPlaced == 0 && (SNESOutput & 0x8000) == 0x8000) {
+		player1.isBombPlaced = 1;
+		player1.bombPosX = player1.playerPosX;
+		player1.bombPosY = player1.playerPosY;
+		player1.bombCount = 0;
+	}
+	unsigned char tempObj;
+	if(player1.playerPosX != 6 && (SNESOutput & 0x0100) == 0x0100) {
+		tempObj = objectLocMatrix[player1.playerPosY][(player1.playerPosX + 1)];
+		if(tempObj == OBJEmpty){
+			objectLocMatrix[player1.playerPosY][player1.playerPosX] = OBJEmpty;
+			player1.playerPosX = player1.playerPosX + 1;
+			objectLocMatrix[player1.playerPosY][player1.playerPosX] = OBJPlayer;
+		}
+		else if(tempObj == OBJDoor) {
+			objectLocMatrix[player1.playerPosY][player1.playerPosX] = OBJEmpty;
+			player1.playerPosX = player1.playerPosX + 1;
+			objectLocMatrix[player1.playerPosY][player1.playerPosX] = OBJPlayer;
+			levelFinish = 1;
+		}
+		else if(tempObj == OBJEnemy) {
+			gameOver = 1;
+		}
+	}
+	else if(player1.playerPosX != 0 && (SNESOutput & 0x0200) == 0x0200) {
+		tempObj = objectLocMatrix[player1.playerPosY][(player1.playerPosX - 1)];
+		if(tempObj == OBJEmpty){
+			objectLocMatrix[player1.playerPosY][player1.playerPosX] = OBJEmpty;
+			player1.playerPosX = player1.playerPosX - 1;
+			objectLocMatrix[player1.playerPosY][player1.playerPosX] = OBJPlayer;
+		}
+		else if(tempObj == OBJDoor) {
+			objectLocMatrix[player1.playerPosY][player1.playerPosX] = OBJEmpty;
+			player1.playerPosX = player1.playerPosX - 1;
+			objectLocMatrix[player1.playerPosY][player1.playerPosX] = OBJPlayer;
+			levelFinish = 1;
+		}
+		else if(tempObj == OBJEnemy) {
+			gameOver = 1;
+		}
+	}
+	else if(player1.playerPosY != 0 && (SNESOutput & 0x0800) == 0x0800) {
+		tempObj = objectLocMatrix[player1.playerPosY - 1][(player1.playerPosX)];
+		if(tempObj == OBJEmpty){
+			objectLocMatrix[player1.playerPosY][player1.playerPosX] = OBJEmpty;
+			player1.playerPosY = player1.playerPosY - 1;
+			objectLocMatrix[player1.playerPosY][player1.playerPosX] = OBJPlayer;
+		}
+		else if(tempObj == OBJDoor) {
+			objectLocMatrix[player1.playerPosY][player1.playerPosX] = OBJEmpty;
+			player1.playerPosY = player1.playerPosY - 1;
+			objectLocMatrix[player1.playerPosY][player1.playerPosX] = OBJPlayer;
+			levelFinish = 1;
+		}
+		else if(tempObj == OBJEnemy) {
+			gameOver = 1;
+		}
+	}
+	else if(player1.playerPosY != 2 && (SNESOutput & 0x0400) == 0x0400) {
+		tempObj = objectLocMatrix[player1.playerPosY + 1][(player1.playerPosX)];
+		if(tempObj == OBJEmpty){
+			objectLocMatrix[player1.playerPosY][player1.playerPosX] = OBJEmpty;
+			player1.playerPosY = player1.playerPosY + 1;
+			objectLocMatrix[player1.playerPosY][player1.playerPosX] = OBJPlayer;
+		}
+		else if(tempObj == OBJDoor) {
+			objectLocMatrix[player1.playerPosY][player1.playerPosX] = OBJEmpty;
+			player1.playerPosY = player1.playerPosY + 1;
+			objectLocMatrix[player1.playerPosY][player1.playerPosX] = OBJPlayer;
+			levelFinish = 1;
+		}
+		else if(tempObj == OBJEnemy) {
+			gameOver = 1;
+		}
+	}
+	if((player1.playerPosX != player1.bombPosX || player1.playerPosY != player1.bombPosY) && player1.isBombPlaced != 0) {
+		objectLocMatrix[player1.bombPosY][player1.bombPosX] = OBJBomb;
+	}
+}
 
+void gamePlayingBombCheck() {
+	unsigned char tempObj;
+	
+	
+	//Check Bomb And Explosion Objs
+	while(explodeStackSize != 0) {
+		objectLocMatrix[explodeStack[explodeStackSize - 1].posY][explodeStack[explodeStackSize - 1].posX] = OBJEmpty;
+		explodeStackSize = explodeStackSize - 1;
+	}
+	
+	if(player1.bombCount < BOMBPERIOD && player1.isBombPlaced != 0) {
+		player1.bombCount += 1;
+	}
+	else if(player1.bombCount >= BOMBPERIOD && player1.isBombPlaced != 0) {
+		tempObj = objectLocMatrix[player1.bombPosY][(player1.bombPosX)];
+		vibrateQueue[vibrateQueueEnd] = 10;
+		if(vibrateQueueEnd >= 2) {
+			vibrateQueueEnd = 0;
+		}
+		else {
+			vibrateQueueEnd = vibrateQueueEnd + 1;
+		}
+		vibrateQueueSize = vibrateQueueSize + 1;
+		
+		soundQueue[soundQueueEnd] = NOTE_B0;
+		if(soundQueueEnd >= 2) {
+			soundQueueEnd = 0;
+		}
+		else {
+			soundQueueEnd = soundQueueEnd + 1;
+		}
+		soundQueueSize = soundQueueSize + 1;
+		
+		if(tempObj == OBJPlayer){
+			gameOver = 1;
+		}
+		else {
+			struct explodeNode tempExplo;
+			tempExplo.posX = player1.bombPosX;
+			tempExplo.posY = player1.bombPosY;
+			objectLocMatrix[player1.bombPosY][(player1.bombPosX)] = OBJExplode;
+			explodeStack[explodeStackSize] = tempExplo;
+			explodeStackSize = explodeStackSize + 1;
+		}
+		
+		if(player1.bombPosX != 6) {
+			tempObj = objectLocMatrix[player1.bombPosY][(player1.bombPosX + 1)];
+			if(tempObj == OBJEmpty || tempObj == OBJWall || tempObj == OBJEnemy){
+				struct explodeNode tempExplo;
+				tempExplo.posX = player1.bombPosX + 1;
+				tempExplo.posY = player1.bombPosY;
+				objectLocMatrix[player1.bombPosY][(player1.bombPosX + 1)] = OBJExplode;
+				explodeStack[explodeStackSize] = tempExplo;
+				explodeStackSize = explodeStackSize + 1;
+				if(tempObj == OBJWall) {
+					tempScore = tempScore + 1;
+				}
+			}
+			else if(tempObj == OBJHidden){
+				objectLocMatrix[player1.bombPosY][(player1.bombPosX + 1)] = OBJDoor;
+				tempScore = tempScore + 5;
+			}
+			else if(tempObj == OBJPlayer){
+				gameOver = 1;
+			}
+		}
+		if(player1.bombPosX != 0) {
+			tempObj = objectLocMatrix[player1.bombPosY][(player1.bombPosX - 1)];
+			if(tempObj == OBJEmpty || tempObj == OBJWall || tempObj == OBJEnemy){
+				struct explodeNode tempExplo;
+				tempExplo.posX = player1.bombPosX - 1;
+				tempExplo.posY = player1.bombPosY;
+				objectLocMatrix[player1.bombPosY][(player1.bombPosX - 1)] = OBJExplode;
+				explodeStack[explodeStackSize] = tempExplo;
+				explodeStackSize = explodeStackSize + 1;
+				if(tempObj == OBJWall) {
+					tempScore = tempScore + 1;
+				}
+			}
+			else if(tempObj == OBJHidden){
+				objectLocMatrix[player1.bombPosY][(player1.bombPosX - 1)] = OBJDoor;
+				tempScore = tempScore + 5;
+			}
+			else if(tempObj == OBJPlayer){
+				gameOver = 1;
+			}
+		}
+		if(player1.bombPosY != 0) {
+			tempObj = objectLocMatrix[player1.bombPosY - 1][(player1.bombPosX)];
+			if(tempObj == OBJEmpty || tempObj == OBJWall || tempObj == OBJEnemy){
+				struct explodeNode tempExplo;
+				tempExplo.posX = player1.bombPosX;
+				tempExplo.posY = player1.bombPosY - 1;
+				objectLocMatrix[player1.bombPosY - 1][(player1.bombPosX)] = OBJExplode;
+				explodeStack[explodeStackSize] = tempExplo;
+				explodeStackSize = explodeStackSize + 1;
+				if(tempObj == OBJWall) {
+					tempScore = tempScore + 1;
+				}
+			}
+			else if(tempObj == OBJHidden){
+				objectLocMatrix[player1.bombPosY - 1][(player1.bombPosX)] = OBJDoor;
+				tempScore = tempScore + 5;
+			}
+			else if(tempObj == OBJPlayer){
+				gameOver = 1;
+			}
+		}
+		if(player1.bombPosY != 2) {
+			tempObj = objectLocMatrix[player1.bombPosY + 1][(player1.bombPosX)];
+			if(tempObj == OBJEmpty || tempObj == OBJWall || tempObj == OBJEnemy){
+				struct explodeNode tempExplo;
+				tempExplo.posX = player1.bombPosX;
+				tempExplo.posY = player1.bombPosY + 1;
+				objectLocMatrix[player1.bombPosY + 1][(player1.bombPosX)] = OBJExplode;
+				explodeStack[explodeStackSize] = tempExplo;
+				explodeStackSize = explodeStackSize + 1;
+				if(tempObj == OBJWall) {
+					tempScore = tempScore + 1;
+				}
+			}
+			else if(tempObj == OBJHidden){
+				objectLocMatrix[player1.bombPosY + 1][(player1.bombPosX)] = OBJDoor;
+				tempScore = tempScore + 5;
+			}
+			else if(tempObj == OBJPlayer){
+				gameOver = 1;
+			}
+		}
+		player1.bombCount = 0;
+		player1.isBombPlaced = 0;
+	}
+}
 
 enum GameLogicStates{GLogicStart, GLogicInit, GLogicMenu, GLogicLevelInit, GLogicPlaying, GLogicGameOver, GLogicLevelComplete, GLogicNextLevel, GLogicRestartLevel, GLogicWin};
 	
@@ -813,214 +1118,8 @@ unsigned char TickGameLogic(unsigned char state) {
 			
 			case GLogicPlaying:
 			
-			//Player Input and Actions
-			if(player1.isBombPlaced == 0 && (SNESOutput & 0x8000) == 0x8000) {
-				player1.isBombPlaced = 1;
-				player1.bombPosX = player1.playerPosX;
-				player1.bombPosY = player1.playerPosY;
-				player1.bombCount = 0;
-			}
-			unsigned char tempObj;
-			if(player1.playerPosX != 6 && (SNESOutput & 0x0100) == 0x0100) {
-				tempObj = objectLocMatrix[player1.playerPosY][(player1.playerPosX + 1)];
-				if(tempObj == OBJEmpty){
-					objectLocMatrix[player1.playerPosY][player1.playerPosX] = OBJEmpty;
-					player1.playerPosX = player1.playerPosX + 1;
-					objectLocMatrix[player1.playerPosY][player1.playerPosX] = OBJPlayer;
-				}
-				else if(tempObj == OBJDoor) {
-					objectLocMatrix[player1.playerPosY][player1.playerPosX] = OBJEmpty;
-					player1.playerPosX = player1.playerPosX + 1;
-					objectLocMatrix[player1.playerPosY][player1.playerPosX] = OBJPlayer;
-					levelFinish = 1;
-				}
-				else if(tempObj == OBJEnemy) {
-					gameOver = 1;
-				}
-			}
-			else if(player1.playerPosX != 0 && (SNESOutput & 0x0200) == 0x0200) {
-				tempObj = objectLocMatrix[player1.playerPosY][(player1.playerPosX - 1)];
-				if(tempObj == OBJEmpty){
-					objectLocMatrix[player1.playerPosY][player1.playerPosX] = OBJEmpty;
-					player1.playerPosX = player1.playerPosX - 1;
-					objectLocMatrix[player1.playerPosY][player1.playerPosX] = OBJPlayer;
-				}
-				else if(tempObj == OBJDoor) {
-					objectLocMatrix[player1.playerPosY][player1.playerPosX] = OBJEmpty;
-					player1.playerPosX = player1.playerPosX - 1;
-					objectLocMatrix[player1.playerPosY][player1.playerPosX] = OBJPlayer;
-					levelFinish = 1;
-				}
-				else if(tempObj == OBJEnemy) {
-					gameOver = 1;
-				}
-			}
-			else if(player1.playerPosY != 0 && (SNESOutput & 0x0800) == 0x0800) {
-				tempObj = objectLocMatrix[player1.playerPosY - 1][(player1.playerPosX)];
-				if(tempObj == OBJEmpty){
-					objectLocMatrix[player1.playerPosY][player1.playerPosX] = OBJEmpty;
-					player1.playerPosY = player1.playerPosY - 1;
-					objectLocMatrix[player1.playerPosY][player1.playerPosX] = OBJPlayer;
-				}
-				else if(tempObj == OBJDoor) {
-					objectLocMatrix[player1.playerPosY][player1.playerPosX] = OBJEmpty;
-					player1.playerPosY = player1.playerPosY - 1;
-					objectLocMatrix[player1.playerPosY][player1.playerPosX] = OBJPlayer;
-					levelFinish = 1;
-				}
-				else if(tempObj == OBJEnemy) {
-					gameOver = 1;
-				}
-			}
-			else if(player1.playerPosY != 2 && (SNESOutput & 0x0400) == 0x0400) {
-				tempObj = objectLocMatrix[player1.playerPosY + 1][(player1.playerPosX)];
-				if(tempObj == OBJEmpty){
-					objectLocMatrix[player1.playerPosY][player1.playerPosX] = OBJEmpty;
-					player1.playerPosY = player1.playerPosY + 1;
-					objectLocMatrix[player1.playerPosY][player1.playerPosX] = OBJPlayer;
-				}
-				else if(tempObj == OBJDoor) {
-					objectLocMatrix[player1.playerPosY][player1.playerPosX] = OBJEmpty;
-					player1.playerPosY = player1.playerPosY + 1;
-					objectLocMatrix[player1.playerPosY][player1.playerPosX] = OBJPlayer;
-					levelFinish = 1;
-				}
-				else if(tempObj == OBJEnemy) {
-					gameOver = 1;
-				}
-			}
-			if((player1.playerPosX != player1.bombPosX || player1.playerPosY != player1.bombPosY) && player1.isBombPlaced != 0) {
-				objectLocMatrix[player1.bombPosY][player1.bombPosX] = OBJBomb;
-			}
-			
-			//Check Bomb And Explosion Objs
-			while(explodeStackSize != 0) {
-				objectLocMatrix[explodeStack[explodeStackSize - 1].posY][explodeStack[explodeStackSize - 1].posX] = OBJEmpty;
-				explodeStackSize = explodeStackSize - 1;
-			}
-			
-			if(player1.bombCount < BOMBPERIOD && player1.isBombPlaced != 0) {
-				player1.bombCount += 1;
-			}
-			else if(player1.bombCount >= BOMBPERIOD && player1.isBombPlaced != 0) {
-				tempObj = objectLocMatrix[player1.bombPosY][(player1.bombPosX)];
-				vibrateQueue[vibrateQueueEnd] = 10;
-				if(vibrateQueueEnd >= 2) {
-					vibrateQueueEnd = 0;
-				}
-				else {
-					vibrateQueueEnd = vibrateQueueEnd + 1;
-				}
-				vibrateQueueSize = vibrateQueueSize + 1;
-				
-				soundQueue[soundQueueEnd] = NOTE_B0;
-				if(soundQueueEnd >= 2) {
-					soundQueueEnd = 0;
-				}
-				else {
-					soundQueueEnd = soundQueueEnd + 1;
-				}
-				soundQueueSize = soundQueueSize + 1;
-				
-				if(tempObj == OBJPlayer){
-					gameOver = 1;
-				}
-				else {
-					struct explodeNode tempExplo;
-					tempExplo.posX = player1.bombPosX;
-					tempExplo.posY = player1.bombPosY;
-					objectLocMatrix[player1.bombPosY][(player1.bombPosX)] = OBJExplode;
-					explodeStack[explodeStackSize] = tempExplo;
-					explodeStackSize = explodeStackSize + 1;
-				}
-				
-				if(player1.bombPosX != 6) {
-					tempObj = objectLocMatrix[player1.bombPosY][(player1.bombPosX + 1)];
-					if(tempObj == OBJEmpty || tempObj == OBJWall || tempObj == OBJEnemy){
-						struct explodeNode tempExplo;
-						tempExplo.posX = player1.bombPosX + 1;
-						tempExplo.posY = player1.bombPosY;
-						objectLocMatrix[player1.bombPosY][(player1.bombPosX + 1)] = OBJExplode;
-						explodeStack[explodeStackSize] = tempExplo;
-						explodeStackSize = explodeStackSize + 1;
-						if(tempObj == OBJWall) {
-							tempScore = tempScore + 1;
-						}
-					}
-					else if(tempObj == OBJHidden){
-						objectLocMatrix[player1.bombPosY][(player1.bombPosX + 1)] = OBJDoor;
-						tempScore = tempScore + 5;
-					}
-					else if(tempObj == OBJPlayer){
-						gameOver = 1;
-					}
-				}
-				if(player1.bombPosX != 0) {
-					tempObj = objectLocMatrix[player1.bombPosY][(player1.bombPosX - 1)];
-					if(tempObj == OBJEmpty || tempObj == OBJWall || tempObj == OBJEnemy){
-						struct explodeNode tempExplo;
-						tempExplo.posX = player1.bombPosX - 1;
-						tempExplo.posY = player1.bombPosY;
-						objectLocMatrix[player1.bombPosY][(player1.bombPosX - 1)] = OBJExplode;
-						explodeStack[explodeStackSize] = tempExplo;
-						explodeStackSize = explodeStackSize + 1;
-						if(tempObj == OBJWall) {
-							tempScore = tempScore + 1;
-						}
-					}
-					else if(tempObj == OBJHidden){
-						objectLocMatrix[player1.bombPosY][(player1.bombPosX - 1)] = OBJDoor;
-						tempScore = tempScore + 5;
-					}
-					else if(tempObj == OBJPlayer){
-						gameOver = 1;
-					}
-				}
-				if(player1.bombPosY != 0) {
-					tempObj = objectLocMatrix[player1.bombPosY - 1][(player1.bombPosX)];
-					if(tempObj == OBJEmpty || tempObj == OBJWall || tempObj == OBJEnemy){
-						struct explodeNode tempExplo;
-						tempExplo.posX = player1.bombPosX;
-						tempExplo.posY = player1.bombPosY - 1;
-						objectLocMatrix[player1.bombPosY - 1][(player1.bombPosX)] = OBJExplode;
-						explodeStack[explodeStackSize] = tempExplo;
-						explodeStackSize = explodeStackSize + 1;
-						if(tempObj == OBJWall) {
-							tempScore = tempScore + 1;
-						}
-					}
-					else if(tempObj == OBJHidden){
-						objectLocMatrix[player1.bombPosY - 1][(player1.bombPosX)] = OBJDoor;
-						tempScore = tempScore + 5;
-					}
-					else if(tempObj == OBJPlayer){
-						gameOver = 1;
-					}
-				}
-				if(player1.bombPosY != 2) {
-					tempObj = objectLocMatrix[player1.bombPosY + 1][(player1.bombPosX)];
-					if(tempObj == OBJEmpty || tempObj == OBJWall || tempObj == OBJEnemy){
-						struct explodeNode tempExplo;
-						tempExplo.posX = player1.bombPosX;
-						tempExplo.posY = player1.bombPosY + 1;
-						objectLocMatrix[player1.bombPosY + 1][(player1.bombPosX)] = OBJExplode;
-						explodeStack[explodeStackSize] = tempExplo;
-						explodeStackSize = explodeStackSize + 1;
-						if(tempObj == OBJWall) {
-							tempScore = tempScore + 1;
-						}
-					}
-					else if(tempObj == OBJHidden){
-						objectLocMatrix[player1.bombPosY + 1][(player1.bombPosX)] = OBJDoor;
-						tempScore = tempScore + 5;
-					}
-					else if(tempObj == OBJPlayer){
-						gameOver = 1;
-					}
-				}
-				player1.bombCount = 0;
-				player1.isBombPlaced = 0;
-			}
+			gamePlayingPlayerActions();
+			gamePlayingBombCheck();
 			
 			transferObjToDis();
 			
@@ -1511,16 +1610,16 @@ int main(){
 	nokia_lcd_init();
 	nokia_lcd_clear();
 	nokia_lcd_render();
-	SNES_init();
+	
 	PWM_on();
 	// Period for the tasks
 	//unsigned long int SMTickSNES_calc = 1;
 	unsigned long int SMTickLCD_calc = 10;
-	unsigned long int SMTickLogic_calc = 10;
-	unsigned long int SMTickSNES_calc = 10;
+	unsigned long int SMTickLogic_calc = 30;
+	unsigned long int SMTickSNES_calc = 1;
 	unsigned long int SMTickPWMMotor_calc = 10;
 	unsigned long int SMTickPWMMotorManager_calc = 10;
-	unsigned long int SMTickSound_calc = 10;
+	unsigned long int SMTickSound_calc = 20;
 	//Calculating GCD
 	unsigned long int tmpGCD = 1;
 	tmpGCD = findGCD(SMTickLogic_calc, SMTickLCD_calc);
